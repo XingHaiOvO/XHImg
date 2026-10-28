@@ -1,0 +1,22 @@
+{
+  "name": "xhimg",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@12.8.1",
+  "scripts": {
+    "dev": "pnpm --parallel --filter './apps/*' dev",
+    "build": "pnpm --filter @xhimg/web build && pnpm --filter @xhimg/server build",
+    "start": "pnpm --filter @xhimg/server start",
+    "test": "pnpm --filter @xhimg/server test",
+    "typecheck": "pnpm -r typecheck",
+    "test:e2e": "playwright test",
+    "test:scale": "pnpm --filter @xhimg/server test:scale",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0",
+    "prettier": "3.6.2",
+    "typescript": "^5.9.3"
+  }
+}
