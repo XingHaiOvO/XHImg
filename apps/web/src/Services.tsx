@@ -2,7 +2,16 @@ import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Plus, Shuffle, Copy, Play, Settings2, Globe, LockKeyhole, Trash2 } from 'lucide-react';
 import { api, json, useData, useAction, useNotice, copy, absolute } from './api';
-import { Button, Field, Check, Modal, Busy } from './components/ui';
+import {
+  QueryFeedback,
+  useConfirm,
+  ActionFeedback,
+  Button,
+  Field,
+  Check,
+  Modal,
+  Busy,
+} from './components/ui';
 import { PageHeading } from './Resources';
 import { Preview } from './Public';
 const empty = {
@@ -43,10 +52,11 @@ export function Services() {
           创建服务
         </Button>
       </PageHeading>
+      <QueryFeedback query={services} backgroundOnly />
       {services.loading ? (
         <Busy />
       ) : services.error ? (
-        <p role="alert">{services.error}</p>
+        <QueryFeedback query={services} />
       ) : (
         <div className="admin-services">
           {services.data?.items.map((s: any) => (
@@ -164,6 +174,7 @@ function normalize(s: any) {
   };
 }
 function ServiceEditor({ value, close, folders, reload }: any) {
+  const confirm = useConfirm();
   const [draft, setDraft] = useState<any>(empty),
     action = useAction();
   useEffect(() => {
@@ -172,6 +183,7 @@ function ServiceEditor({ value, close, folders, reload }: any) {
   const patch = (key: string, v: any) => setDraft({ ...draft, [key]: v });
   return (
     <Modal
+      busy={action.pending}
       open={!!value}
       onOpenChange={(v) => {
         if (!v) close();
@@ -382,14 +394,14 @@ function ServiceEditor({ value, close, folders, reload }: any) {
           onChange={(e) => patch('enabled', e.target.checked)}
         />
         <div className="button-row">
-          <Button disabled={action.pending}>保存服务</Button>
+          <Button disabled={action.pending}>{action.pending ? '正在提交…' : '保存服务'}</Button>
           {value?.id && value.kind !== 'global' && (
             <Button
               type="button"
               variant="destructive"
               disabled={action.pending}
-              onClick={() => {
-                if (confirm('删除服务后原接口地址将失效，确认删除？'))
+              onClick={async () => {
+                if (await confirm(`删除服务“${value.name}”后原接口地址将失效，确认删除？`))
                   void action.run(async () => {
                     await api(`admin/random-services/${value.id}`, json('DELETE'));
                     await reload();
@@ -401,6 +413,7 @@ function ServiceEditor({ value, close, folders, reload }: any) {
             </Button>
           )}
         </div>
+        <ActionFeedback action={action} />
       </form>
     </Modal>
   );

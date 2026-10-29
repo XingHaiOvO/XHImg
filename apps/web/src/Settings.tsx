@@ -1,45 +1,64 @@
+import { useUrlTab } from './navigation';
 import { useState, useEffect, lazy, Suspense } from 'react';
 import { Plus, HardDrive, Cloud, KeyRound, ShieldCheck, Copy } from 'lucide-react';
 import { api, json, useData, useAction, useNotice, bytes, copy } from './api';
-import { Button, Field, Check, Modal, Busy } from './components/ui';
+import {
+  QueryFeedback,
+  useConfirm,
+  ActionFeedback,
+  Button,
+  Field,
+  Check,
+  Modal,
+  Busy,
+} from './components/ui';
 import { PageHeading } from './Resources';
 import { ProcessingSettings, AISettings } from './P1Settings';
 const StorageMigrations = lazy(() =>
   import('./StorageMigrations').then((module) => ({ default: module.StorageMigrations })),
 );
 export function SettingsPage() {
-  const [tab, setTab] = useState(
-    new URLSearchParams(location.search).get('tab') === 'ai'
-      ? 'AI 模型'
-      : new URLSearchParams(location.search).get('tab') === 'migrations'
-        ? '存储迁移'
-        : '存储后端',
+  const [tab, setTab] = useUrlTab(
+    ['storage', 'migrations', 'keys', 'processing', 'ai', 'site', 'security'],
+    'storage',
   );
+  const labels: Record<string, string> = {
+    storage: '存储后端',
+    migrations: '存储迁移',
+    keys: 'API Key',
+    processing: '图片处理',
+    ai: 'AI 模型',
+    site: '站点设置',
+    security: '管理员安全',
+  };
   return (
     <>
       <PageHeading title="设置中心" description="基础设施，安静地为你的图片服务。" />
-      <div className="tabs settings-tabs">
-        {['存储后端', '存储迁移', 'API Key', '图片处理', 'AI 模型', '站点设置', '管理员安全'].map(
-          (t) => (
-            <button key={t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>
-              {t}
-            </button>
-          ),
-        )}
+      <div className="tabs settings-tabs" aria-label="设置分类">
+        {Object.keys(labels).map((t) => (
+          <button
+            key={t}
+            className={tab === t ? 'active' : ''}
+            aria-current={tab === t ? 'page' : undefined}
+            onClick={() => setTab(t)}
+          >
+            {labels[t]}
+          </button>
+        ))}
       </div>
-      {tab === '存储后端' ? (
+      {tab === 'storage' ? (
         <StorageSettings />
-      ) : tab === '存储迁移' ? (
+      ) : tab === 'migrations' ? (
         <Suspense fallback={<Busy />}>
           <StorageMigrations />
         </Suspense>
-      ) : tab === 'API Key' ? (
+      ) : tab === 'keys' ? (
         <KeySettings />
-      ) : tab === '站点设置' ? (
+      ) : tab === 'site' ? (
         <SiteSettings />
-      ) : tab === '图片处理' ? (
+      ) : tab === 'processing' ? (
         <ProcessingSettings />
-      ) : tab === 'AI 模型' ? (
+      ) : tab === 'ai' ? (
         <AISettings />
       ) : (
         <SecuritySettings />
@@ -48,7 +67,8 @@ export function SettingsPage() {
   );
 }
 function StorageSettings() {
-  const { data, error, loading, reload } = useData('admin/storage-backends'),
+  const { data, error, loading, reload, refreshError, refreshing } =
+      useData('admin/storage-backends'),
     [edit, setEdit] = useState<any>(),
     action = useAction();
   return (
@@ -73,10 +93,11 @@ function StorageSettings() {
           添加存储
         </Button>
       </div>
+      <QueryFeedback query={{ error: refreshError, refreshing, reload }} />
       {loading ? (
         <Busy />
       ) : error ? (
-        <p role="alert">{error}</p>
+        <QueryFeedback query={{ error, reload }} />
       ) : (
         <div className="storage-grid">
           {data?.items.map((s: any) => (
@@ -151,6 +172,7 @@ function StorageSettings() {
   );
 }
 function StorageEditor({ value, close, reload }: any) {
+  const confirm = useConfirm();
   const [draft, setDraft] = useState<any>({}),
     [credentials, setCredentials] = useState({ accessKeyId: '', secretAccessKey: '' }),
     action = useAction();
@@ -164,6 +186,7 @@ function StorageEditor({ value, close, reload }: any) {
     setDraft({ ...draft, config: { ...draft.config, [key]: v } });
   return (
     <Modal
+      busy={action.pending}
       open={!!value}
       onOpenChange={(v) => {
         if (!v) close();
@@ -283,14 +306,14 @@ function StorageEditor({ value, close, reload }: any) {
           onChange={(e) => setDraft({ ...draft, isDefault: e.target.checked })}
         />
         <div className="button-row">
-          <Button disabled={action.pending}>保存存储</Button>
+          <Button disabled={action.pending}>{action.pending ? '正在提交…' : '保存存储'}</Button>
           {value?.id && !value.is_default && (
             <Button
               type="button"
               variant="destructive"
               disabled={action.pending}
-              onClick={() => {
-                if (confirm('删除存储配置？仍被引用时会阻止删除。'))
+              onClick={async () => {
+                if (await confirm(`删除存储配置“${value.name}”？仍被引用时会阻止删除。`))
                   void action.run(async () => {
                     await api(`admin/storage-backends/${value.id}`, json('DELETE'));
                     await reload();
@@ -302,11 +325,13 @@ function StorageEditor({ value, close, reload }: any) {
             </Button>
           )}
         </div>
+        <ActionFeedback action={action} />
       </form>
     </Modal>
   );
 }
 function KeySettings() {
+  const confirm = useConfirm();
   const keys = useData('admin/api-keys'),
     folders = useData('admin/folders'),
     services = useData('admin/random-services'),
@@ -327,10 +352,11 @@ function KeySettings() {
           创建密钥
         </Button>
       </div>
+      <QueryFeedback query={keys} backgroundOnly />
       {keys.loading ? (
         <Busy />
       ) : keys.error ? (
-        <p role="alert">{keys.error}</p>
+        <QueryFeedback query={keys} />
       ) : (
         <div className="panel table-wrap">
           <table>
@@ -377,8 +403,12 @@ function KeySettings() {
                     <Button
                       variant="destructive"
                       disabled={!!k.revoked || action.pending}
-                      onClick={() => {
-                        if (confirm('撤销后此密钥及其私有签名链接立即失效，确认撤销？'))
+                      onClick={async () => {
+                        if (
+                          await confirm(
+                            `撤销密钥“${k.name}”后，此密钥及其私有签名链接立即失效，确认撤销？`,
+                          )
+                        )
                           void action.run(async () => {
                             await api(`admin/api-keys/${k.id}`, json('DELETE'));
                             await keys.reload();
@@ -448,6 +478,7 @@ function KeyEditor({ open, close, folders, services, storages, done }: any) {
     setGrants(grants.map((g, i) => (i === index ? { ...g, ...value } : g)));
   return (
     <Modal
+      busy={action.pending}
       open={open}
       onOpenChange={(v) => {
         if (!v) close();
@@ -576,6 +607,7 @@ function KeyEditor({ open, close, folders, services, storages, done }: any) {
           />
         </Field>
         <Button disabled={action.pending || !permissions.length}>创建并显示密钥</Button>
+        <ActionFeedback action={action} />
       </form>
     </Modal>
   );
@@ -589,10 +621,11 @@ function SiteSettings() {
       setDraft({ ...settings.data, origins: settings.data.allowedOrigins.join('\n') });
   }, [settings.data]);
   if (settings.loading) return <Busy />;
-  if (settings.error) return <p role="alert">{settings.error}</p>;
+  if (settings.error) return <QueryFeedback query={settings} />;
   return (
     <section className="panel narrow-panel">
       <h2>站点设置</h2>
+      <QueryFeedback query={settings} />
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -634,7 +667,8 @@ function SiteSettings() {
             onChange={(e) => setDraft({ ...draft, origins: e.target.value })}
           />
         </Field>
-        <Button disabled={action.pending}>保存站点设置</Button>
+        <Button disabled={action.pending}>{action.pending ? '正在提交…' : '保存站点设置'}</Button>
+        <ActionFeedback action={action} />
       </form>
     </section>
   );
@@ -677,7 +711,10 @@ function SecuritySettings() {
             onChange={(e) => setPassword(e.target.value)}
           />
         </Field>
-        <Button disabled={action.pending}>修改密码并重新登录</Button>
+        <Button disabled={action.pending}>
+          {action.pending ? '正在提交…' : '修改密码并重新登录'}
+        </Button>
+        <ActionFeedback action={action} />
       </form>
     </section>
   );

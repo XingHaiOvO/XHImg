@@ -1,4 +1,13 @@
-import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useCallback,
+  useRef,
+  type ReactNode,
+} from 'react';
+import { X } from 'lucide-react';
 let csrf = '';
 export const csrfToken = () => csrf;
 export function setCsrf(value: string) {
@@ -22,64 +31,165 @@ export const json = (method: string, body?: unknown) => ({
   ...(body === undefined ? {} : { body: JSON.stringify(body) }),
 });
 export function useData<T = any>(path: string) {
-  const [data, setData] = useState<T>(),
-    [error, setError] = useState(''),
-    [loading, setLoading] = useState(true);
+  const [state, setState] = useState<{ path: string; data?: T; error: string; pending: boolean }>({
+    path,
+    error: '',
+    pending: true,
+  });
+  const currentPath = useRef(path),
+    sequence = useRef(0);
+  const request = useRef<
+    { path: string; controller: AbortController; promise: Promise<void> } | undefined
+  >(undefined);
+  currentPath.current = path;
   const reload = useCallback(() => {
-    setLoading(true);
-    return api<T>(path)
-      .then((x) => {
-        setData(x);
-        setError('');
+    if (currentPath.current !== path) return Promise.resolve();
+    if (request.current?.path === path) return request.current.promise;
+    request.current?.controller.abort();
+    const controller = new AbortController(),
+      version = ++sequence.current;
+    setState((previous) => ({
+      path,
+      data: previous.path === path ? previous.data : undefined,
+      error: '',
+      pending: true,
+    }));
+    const promise = api<T>(path, { signal: controller.signal })
+      .then((data) => {
+        if (
+          !controller.signal.aborted &&
+          version === sequence.current &&
+          currentPath.current === path
+        )
+          setState({ path, data, error: '', pending: false });
       })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+      .catch((error) => {
+        if (
+          !controller.signal.aborted &&
+          version === sequence.current &&
+          currentPath.current === path
+        )
+          setState((previous) => ({ ...previous, error: error.message, pending: false }));
+      })
+      .finally(() => {
+        if (version === sequence.current) request.current = undefined;
+      });
+    request.current = { path, controller, promise };
+    return promise;
   }, [path]);
   useEffect(() => {
     void reload();
+    return () => {
+      request.current?.controller.abort();
+      request.current = undefined;
+      sequence.current++;
+    };
   }, [reload]);
-  return { data, error, loading, reload };
+  const matches = state.path === path;
+  const data = matches ? state.data : undefined;
+  return {
+    data,
+    error: matches && !data ? state.error : '',
+    refreshError: matches && data ? state.error : '',
+    loading: !matches || (!data && state.pending),
+    refreshing: !!data && state.pending,
+    reload,
+  };
+}
+
+// The next timer starts only after the previous refresh settles.
+export function usePolling(reload: () => Promise<void>, active: boolean) {
+  const latest = useRef(reload);
+  latest.current = reload;
+  useEffect(() => {
+    let stopped = false,
+      running = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      if (!stopped && active && !document.hidden) timer = setTimeout(tick, 3000);
+    };
+    const tick = async () => {
+      if (stopped || running || document.hidden) return;
+      running = true;
+      try {
+        await latest.current();
+      } finally {
+        running = false;
+        schedule();
+      }
+    };
+    const visibility = () => {
+      clearTimeout(timer);
+      if (!document.hidden) void tick();
+    };
+    schedule();
+    document.addEventListener('visibilitychange', visibility);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', visibility);
+    };
+  }, [active]);
 }
 const NoticeContext = createContext<(text: string, error?: boolean) => void>(() => {});
 export function NoticeProvider({ children }: { children: ReactNode }) {
-  const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
-  useEffect(() => {
-    if (notice) {
-      const timer = setTimeout(() => setNotice(null), 6000);
-      return () => clearTimeout(timer);
-    }
-  }, [notice]);
+  const [notices, setNotices] = useState<{ id: number; text: string; error: boolean }[]>([]);
+  const nextId = useRef(0);
+  const dismiss = (id: number) => setNotices((items) => items.filter((item) => item.id !== id));
   return (
-    <NoticeContext.Provider value={(text, error = false) => setNotice({ text, error })}>
+    <NoticeContext.Provider
+      value={(text, error = false) => {
+        const id = ++nextId.current;
+        setNotices((items) => [...items.filter((item) => item.error), { id, text, error }]);
+        if (!error) setTimeout(() => dismiss(id), 6000);
+      }}
+    >
       {children}
-      {notice && (
-        <div
-          className={'notice ' + (notice.error ? 'error' : '')}
-          role={notice.error ? 'alert' : 'status'}
-          onClick={() => setNotice(null)}
-        >
-          {notice.text}
-        </div>
-      )}
+      <div className="notice-stack">
+        {notices.map((notice) => (
+          <div
+            key={notice.id}
+            className={'notice ' + (notice.error ? 'error' : '')}
+            role={notice.error ? 'alert' : 'status'}
+          >
+            <span>{notice.text}</span>
+            <button
+              className="icon-button"
+              aria-label="关闭提示"
+              onClick={() => dismiss(notice.id)}
+            >
+              <X size={16} />
+            </button>
+          </div>
+        ))}
+      </div>
     </NoticeContext.Provider>
   );
 }
 export const useNotice = () => useContext(NoticeContext);
 export function useAction() {
   const notice = useNotice(),
-    [pending, setPending] = useState(false);
+    [pending, setPending] = useState(false),
+    [error, setError] = useState(''),
+    locked = useRef(false);
   return {
     pending,
+    error,
     run: async (fn: () => Promise<unknown>, success = '已保存') => {
+      if (locked.current) return false;
+      locked.current = true;
+      setError('');
       setPending(true);
       try {
         await fn();
         if (success) notice(success);
         return true;
       } catch (e: any) {
+        setError(e.message);
         notice(e.message, true);
         return false;
       } finally {
+        locked.current = false;
         setPending(false);
       }
     },

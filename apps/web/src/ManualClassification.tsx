@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Play } from 'lucide-react';
 import { api, json, useData, useAction, useNotice } from './api';
-import { Button, Busy, Field } from './components/ui';
+import { QueryFeedback, ActionFeedback, Button, Busy, Field } from './components/ui';
 import type { ImageInfo } from '../../../packages/shared/src/index';
 
 const available = (image: ImageInfo) =>
@@ -20,31 +20,9 @@ export function ManualClassification({
     [search, setSearch] = useState(''),
     [page, setPage] = useState(1),
     [selected, setSelected] = useState<string[]>([]);
-  const [imagePage, setImagePage] = useState<{ items: ImageInfo[]; total: number }>(),
-    [loading, setLoading] = useState(true),
-    [error, setError] = useState(''),
-    [revision, setRevision] = useState(0);
-  useEffect(() => {
-    let active = true;
-    setLoading(true);
-    setError('');
-    void api(
-      `admin/images?${new URLSearchParams({ folderId: folder, search, page: String(page) })}`,
-    )
-      .then((data) => {
-        if (active) setImagePage(data);
-      })
-      .catch((e: Error) => {
-        if (active) setError(e.message);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [folder, search, page, revision]);
-  const result = { data: imagePage, loading, error, reload: () => setRevision((n) => n + 1) };
+  const result = useData<{ items: ImageInfo[]; total: number }>(
+    `admin/images?${new URLSearchParams({ folderId: folder, search, page: String(page) })}`,
+  );
   const config = useData('admin/ai'),
     action = useAction(),
     notice = useNotice();
@@ -91,7 +69,7 @@ export function ManualClassification({
             />
           </Field>
         </div>
-        {config.error && <p role="alert">{config.error}</p>}
+        {config.error && <QueryFeedback query={config} />}
         {config.data && !config.data.enabled && (
           <p className="muted">
             请先在<Link to="/admin/settings?tab=ai">模型配置</Link>中启用 AI 分类。
@@ -139,10 +117,12 @@ export function ManualClassification({
           </Button>
         </div>
       </section>
+      <ActionFeedback action={action} />
+      <QueryFeedback query={result} backgroundOnly />
       {result.loading ? (
         <Busy />
       ) : result.error ? (
-        <p role="alert">{result.error}</p>
+        <QueryFeedback query={result} />
       ) : items.length ? (
         <div className="panel table-wrap">
           <table className="organization-table">

@@ -1,4 +1,4 @@
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 const MigrationCreateDialog = lazy(() =>
   import('./StorageMigrations').then((module) => ({ default: module.MigrationCreateDialog })),
@@ -16,7 +16,15 @@ import {
   ArrowUpRight,
 } from 'lucide-react';
 import { api, json, useData, useAction, useNotice, bytes, copy, absolute } from './api';
-import { Button, Field, Modal, Busy } from './components/ui';
+import {
+  QueryFeedback,
+  useConfirm,
+  ActionFeedback,
+  Button,
+  Field,
+  Modal,
+  Busy,
+} from './components/ui';
 import { Thumbnail, Preview } from './Public';
 import { UploadCenter } from './components/UploadCenter';
 import { ProcessingEditor, processingDefaults } from './components/ProcessingEditor';
@@ -42,10 +50,10 @@ export function PageHeading({
 }
 export function Overview() {
   const navigate = useNavigate();
-  const { data, error, loading, reload } = useData('admin/overview'),
+  const { data, error, loading, reload, refreshError, refreshing } = useData('admin/overview'),
     action = useAction();
   if (loading) return <Busy />;
-  if (error) return <p role="alert">{error}</p>;
+  if (error) return <QueryFeedback query={{ error, reload }} />;
   return (
     <>
       <PageHeading title="一切，井然有序。" description="从这里，开始今天的图片工作。">
@@ -56,6 +64,7 @@ export function Overview() {
           </Link>
         </Button>
       </PageHeading>
+      <QueryFeedback query={{ error: refreshError, refreshing, reload }} />
       <div className="metrics">
         {[
           ['图片总数', data.images.total ?? 0, '张图片'],
@@ -198,13 +207,17 @@ export function Resources() {
     [preview, setPreview] = useState<any>(),
     [editor, setEditor] = useState<any>(),
     [moveTarget, setMoveTarget] = useState('');
+  const [treeOpen, setTreeOpen] = useState(false);
   const [migrationOpen, setMigrationOpen] = useState(false),
     navigate = useNavigate();
   const action = useAction();
   useEffect(() => {
     const t = setTimeout(() => {
-      setFilter(search);
-      setPage(1);
+      if (search !== filter) {
+        setFilter(search);
+        setSelected([]);
+        setPage(1);
+      }
     }, 250);
     return () => clearTimeout(t);
   }, [search]);
@@ -212,12 +225,25 @@ export function Resources() {
     setPage(1);
     setSelected([]);
     setTab('图片');
+    setTreeOpen(false);
   }, [folderId]);
   const images = useData(
       `admin/images?${new URLSearchParams({ folderId, search: filter, page: String(page) })}`,
     ),
     folder = folders.data?.items.find((f: any) => f.id === folderId),
     allFolders = folders.data?.items ?? [];
+  const previousPage = useRef<{ key: string; ids: string[] } | undefined>(undefined);
+  useEffect(() => {
+    if (!images.data) return;
+    const key = JSON.stringify([folderId, filter, page]);
+    const ids = images.data.items.map((image: any) => image.id as string);
+    const previous = previousPage.current;
+    if (previous?.key === key)
+      setSelected((selected) =>
+        selected.filter((id) => !previous.ids.includes(id) || ids.includes(id)),
+      );
+    previousPage.current = { key, ids };
+  }, [images.data, folderId, filter, page]);
   const reload = async () => {
     await Promise.all([folders.reload(), images.reload()]);
   };
@@ -239,7 +265,10 @@ export function Resources() {
           <button
             className={'tree-item ' + (f.id === folderId ? 'active' : '')}
             style={{ paddingLeft: 12 + depth * 16 }}
-            onClick={() => setSearchParams({ folder: f.id })}
+            onClick={() => {
+              setSearchParams({ folder: f.id });
+              setTreeOpen(false);
+            }}
           >
             <FolderOpen size={16} />
             <span>{f.name}</span>
@@ -263,18 +292,30 @@ export function Resources() {
           </Button>
         </div>
       </PageHeading>
+      <button
+        className="folder-tree-toggle secondary button"
+        aria-expanded={treeOpen}
+        aria-controls="resource-folder-tree"
+        onClick={() => setTreeOpen(!treeOpen)}
+      >
+        <FolderOpen size={17} />
+        {folder?.name ?? '所有图片'} · {treeOpen ? '收起文件夹' : '选择文件夹'}
+      </button>
       <div className="resource-layout">
-        <aside className="folder-tree">
+        <aside id="resource-folder-tree" className={'folder-tree ' + (treeOpen ? 'tree-open' : '')}>
           <button
             className={'tree-item ' + (!folderId ? 'active' : '')}
-            onClick={() => setSearchParams({})}
+            onClick={() => {
+              setSearchParams({});
+              setTreeOpen(false);
+            }}
           >
             <Images size={17} />
             <span>所有图片</span>
           </button>
           <div className="tree-divider" />
           {tree(null)}
-          {folders.error && <p role="alert">{folders.error}</p>}
+          {folders.error && <QueryFeedback query={folders} />}
         </aside>
         <section className="resource-content">
           <div className="folder-heading">
@@ -376,10 +417,11 @@ export function Resources() {
                   </Button>
                 </div>
               )}
+              <QueryFeedback query={images} backgroundOnly />
               {images.loading ? (
                 <Busy />
               ) : images.error ? (
-                <p role="alert">{images.error}</p>
+                <QueryFeedback query={images} />
               ) : images.data?.items.length ? (
                 <div className="image-grid">
                   {images.data.items.map((image: any) => (
@@ -427,8 +469,12 @@ export function Resources() {
               ) : (
                 <div className="empty">
                   <FolderOpen size={36} />
-                  <h3>留一点空间，给新的图片。</h3>
-                  <p>上传图片到这里，或从其他文件夹移动过来。</p>
+                  <h3>{filter ? '没有找到匹配的图片。' : '留一点空间，给新的图片。'}</h3>
+                  <p>
+                    {filter
+                      ? '调整名称或标签，再试一次。'
+                      : '上传图片到这里，或从其他文件夹移动过来。'}
+                  </p>
                   <Button variant="secondary" onClick={() => setUploadOpen(true)}>
                     上传图片
                   </Button>
@@ -504,6 +550,7 @@ function FolderCreate({ open, close, folders, parentId, reload }: any) {
   useEffect(() => setParent(parentId), [parentId, open]);
   return (
     <Modal
+      busy={action.pending}
       open={open}
       onOpenChange={(v) => {
         if (!v) close();
@@ -545,12 +592,14 @@ function FolderCreate({ open, close, folders, parentId, reload }: any) {
             <option value="public">公开</option>
           </select>
         </Field>
-        <Button disabled={action.pending}>创建文件夹</Button>
+        <Button disabled={action.pending}>{action.pending ? '正在提交…' : '创建文件夹'}</Button>
+        <ActionFeedback action={action} />
       </form>
     </Modal>
   );
 }
 function FolderPanel({ folder, folders, storages, tab, reload, leave }: any) {
+  const confirm = useConfirm();
   const [draft, setDraft] = useState<any>({}),
     notice = useNotice(),
     action = useAction();
@@ -742,6 +791,7 @@ function FolderPanel({ folder, folders, storages, tab, reload, leave }: any) {
         >
           保存设置
         </Button>
+        <ActionFeedback action={action} />
       </form>
       {tab === '设置' && !folder.system && (
         <div className="danger-zone">
@@ -750,8 +800,8 @@ function FolderPanel({ folder, folders, storages, tab, reload, leave }: any) {
           <Button
             variant="destructive"
             disabled={action.pending}
-            onClick={() => {
-              if (confirm(`删除空文件夹“${folder.name}”？`))
+            onClick={async () => {
+              if (await confirm(`删除空文件夹“${folder.name}”？`))
                 void action.run(async () => {
                   await api(`admin/folders/${folder.id}`, json('DELETE'));
                   leave();
@@ -782,6 +832,7 @@ function ImageEditor({ image, close, folders, reload }: any) {
   }, [image]);
   return (
     <Modal
+      busy={action.pending}
       open={!!image}
       onOpenChange={(v) => {
         if (!v) close();
@@ -899,7 +950,8 @@ function ImageEditor({ image, close, folders, reload }: any) {
               检查并恢复文件
             </Button>
           )}
-          <Button disabled={action.pending}>保存信息</Button>
+          <Button disabled={action.pending}>{action.pending ? '正在提交…' : '保存信息'}</Button>
+          <ActionFeedback action={action} />
         </form>
       )}
     </Modal>
@@ -920,8 +972,11 @@ function UploadModal({ open, close, folders, current, reload }: any) {
   );
 }
 export function Trash() {
+  const confirm = useConfirm();
   const [page, setPage] = useState(1),
-    { data, error, loading, reload } = useData(`admin/images?trash=true&page=${page}`),
+    { data, error, loading, reload, refreshError, refreshing } = useData(
+      `admin/images?trash=true&page=${page}`,
+    ),
     action = useAction();
   return (
     <>
@@ -929,10 +984,11 @@ export function Trash() {
         title="回收站"
         description="删除后即停止对外提供访问。恢复前，请确认当前文件夹权限。"
       />
+      <QueryFeedback query={{ error: refreshError, refreshing, reload }} />
       {loading ? (
         <Busy />
       ) : error ? (
-        <p role="alert">{error}</p>
+        <QueryFeedback query={{ error, reload }} />
       ) : data?.items.length ? (
         <div className="panel table-wrap">
           <table>
@@ -970,8 +1026,8 @@ export function Trash() {
                       <Button
                         variant="destructive"
                         disabled={action.pending || i.state === 'purging'}
-                        onClick={() => {
-                          if (confirm('彻底删除后无法恢复，确认删除？'))
+                        onClick={async () => {
+                          if (await confirm(`彻底删除图片“${i.name}”后无法恢复，确认删除？`))
                             void action.run(async () => {
                               await api(`admin/images/${i.id}/permanent`, json('DELETE'));
                               await reload();

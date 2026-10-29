@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api, json, useData, useAction } from './api';
-import { Field, Check, Button, Busy } from './components/ui';
+import { QueryFeedback, ActionFeedback, Field, Check, Button, Busy } from './components/ui';
 import { ProcessingEditor, processingDefaults } from './components/ProcessingEditor';
 
 export function ProcessingSettings() {
@@ -15,13 +15,14 @@ export function ProcessingSettings() {
     }
   }, [config.data]);
   if (config.loading) return <Busy />;
-  if (config.error) return <p role="alert">{config.error}</p>;
+  if (config.error) return <QueryFeedback query={config} />;
   return (
     <section className="panel narrow-panel">
       <h2>图片处理</h2>
       <p className="muted">
         策略只影响后续上传。已有图片可在编辑中重新处理，成功前继续提供当前版本。
       </p>
+      <QueryFeedback query={config} />
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -41,7 +42,8 @@ export function ProcessingSettings() {
           />
         </Field>
         <ProcessingEditor value={policy} onChange={setPolicy} />
-        <Button disabled={action.pending}>保存处理策略</Button>
+        <Button disabled={action.pending}>{action.pending ? '正在提交…' : '保存处理策略'}</Button>
+        <ActionFeedback action={action} />
       </form>
     </section>
   );
@@ -57,7 +59,13 @@ export function AISettings() {
     if (config.data) setDraft(config.data);
   }, [config.data]);
   if (config.loading || folders.loading) return <Busy />;
-  if (config.error || folders.error) return <p role="alert">{config.error || folders.error}</p>;
+  if (config.error || folders.error)
+    return (
+      <>
+        <QueryFeedback query={config} />
+        <QueryFeedback query={folders} />
+      </>
+    );
   const set = (field: string, value: any) => setDraft({ ...draft, [field]: value });
   const save = async () => {
     const { hasKey, ...body } = draft;
@@ -74,6 +82,7 @@ export function AISettings() {
         发送去除元数据、最长边1024px的预览图至配置的模型。AI
         只选择已允许的文件夹，不修改图片公开性。
       </p>
+      <QueryFeedback query={config} />
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -184,7 +193,7 @@ export function AISettings() {
             ))}
         </fieldset>
         <div className="button-row">
-          <Button disabled={action.pending}>保存模型配置</Button>
+          <Button disabled={action.pending}>{action.pending ? '正在提交…' : '保存模型配置'}</Button>
           <Button
             type="button"
             variant="secondary"
@@ -202,6 +211,7 @@ export function AISettings() {
         <p className="muted">
           测试使用内置蓝色测试图，不发送图库文件。配置模型会产生服务商请求费用时，请按需使用。
         </p>
+        <ActionFeedback action={action} />
       </form>
     </section>
   );

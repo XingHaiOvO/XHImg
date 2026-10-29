@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import * as Dialog from '@radix-ui/react-dialog';
 import {
   Routes,
   Route,
@@ -23,9 +24,10 @@ import {
   Menu,
   ArrowUpRight,
   Sparkles,
+  X,
 } from 'lucide-react';
 import { api, json, setCsrf, useData, useAction } from './api';
-import { Button, Field, Busy } from './components/ui';
+import { ActionFeedback, Button, Field, Busy } from './components/ui';
 import { Home, Gallery, Docs } from './Public';
 import { Overview, Resources, Trash } from './Resources';
 import { Services } from './Services';
@@ -115,74 +117,105 @@ function PublicShell() {
 function AdminShell() {
   const auth = useData('auth/me'),
     navigate = useNavigate(),
+    location = useLocation(),
     [open, setOpen] = useState(false);
+  useEffect(() => {
+    setOpen(false);
+  }, [location.pathname, location.search]);
+  useEffect(() => {
+    const media = matchMedia('(min-width: 651px)');
+    const close = () => {
+      if (media.matches) setOpen(false);
+    };
+    media.addEventListener('change', close);
+    return () => media.removeEventListener('change', close);
+  }, []);
   useEffect(() => {
     if (auth.data) setCsrf(auth.data.csrf);
   }, [auth.data]);
   if (auth.loading) return <Busy />;
   if (auth.error) return <Navigate to="/login" replace />;
-  return (
-    <div className="admin-shell">
-      <aside className={'sidebar ' + (open ? 'expanded' : '')}>
-        <Brand />
-        <p className="sidebar-caption">个人图片工作台</p>
-        <nav aria-label="管理导航">
-          {[
-            ['/admin', LayoutDashboard, '概览'],
-            ['/admin/services', Shuffle, '随机图服务'],
-            ['/admin/folders', FolderOpen, '资源文件夹'],
-            ['/admin/organize', Sparkles, '智能整理'],
-            ['/admin/trash', Trash2, '回收站'],
-            ['/admin/settings', Settings, '设置中心'],
-          ].map(([path, Icon, label]: any) => (
-            <NavLink key={path} to={path} end={path === '/admin'} onClick={() => setOpen(false)}>
-              <Icon size={19} />
-              {label}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="sidebar-bottom">
-          <div className="avatar">{auth.data.username[0]?.toUpperCase()}</div>
-          <div>
-            <strong>{auth.data.username}</strong>
-            <small>管理员</small>
-          </div>
-          <button
-            className="icon-button"
-            aria-label="退出登录"
-            onClick={async () => {
-              await api('auth/logout', json('POST'));
-              setCsrf('');
-              navigate('/login');
-            }}
-          >
-            <LogOut size={18} />
-          </button>
+  const navigation = (
+    <>
+      <Brand />
+      <p className="sidebar-caption">个人图片工作台</p>
+      <nav aria-label="管理导航">
+        {[
+          ['/admin', LayoutDashboard, '概览'],
+          ['/admin/services', Shuffle, '随机图服务'],
+          ['/admin/folders', FolderOpen, '资源文件夹'],
+          ['/admin/organize', Sparkles, '智能整理'],
+          ['/admin/trash', Trash2, '回收站'],
+          ['/admin/settings', Settings, '设置中心'],
+        ].map(([path, Icon, label]: any) => (
+          <NavLink key={path} to={path} end={path === '/admin'} onClick={() => setOpen(false)}>
+            <Icon size={19} />
+            {label}
+          </NavLink>
+        ))}
+      </nav>
+      <div className="sidebar-bottom">
+        <div className="avatar">{auth.data.username[0]?.toUpperCase()}</div>
+        <div>
+          <strong>{auth.data.username}</strong>
+          <small>管理员</small>
         </div>
-      </aside>
-      <div className="admin-main">
-        <header className="admin-header">
-          <button
-            className="icon-button menu-button"
-            aria-label="展开管理导航"
-            aria-expanded={open}
-            onClick={() => setOpen(!open)}
-          >
-            <Menu size={20} />
-          </button>
-          <span>你的图片，你的服务。</span>
-          <div>
-            <Link to="/" target="_blank">
-              访问网站 <ArrowUpRight size={14} />
-            </Link>
-            <Theme />
-          </div>
-        </header>
-        <main className="workspace">
-          <Outlet />
-        </main>
+        <button
+          className="icon-button"
+          aria-label="退出登录"
+          onClick={async () => {
+            await api('auth/logout', json('POST'));
+            setCsrf('');
+            navigate('/login');
+          }}
+        >
+          <LogOut size={18} />
+        </button>
       </div>
-    </div>
+    </>
+  );
+  return (
+    <Dialog.Root open={open} onOpenChange={setOpen}>
+      <div className="admin-shell">
+        <aside className="sidebar desktop-sidebar">{navigation}</aside>
+        <Dialog.Portal>
+          <Dialog.Overlay className="navigation-overlay" />
+          <Dialog.Content className="sidebar mobile-sidebar">
+            <Dialog.Title className="sr-only">管理导航</Dialog.Title>
+            <Dialog.Description className="sr-only">
+              选择工作区，按 Escape 关闭导航。
+            </Dialog.Description>
+            <Dialog.Close className="icon-button navigation-close" aria-label="关闭管理导航">
+              <X size={20} />
+            </Dialog.Close>
+            {navigation}
+          </Dialog.Content>
+        </Dialog.Portal>
+        <div className="admin-main">
+          <header className="admin-header">
+            <Dialog.Trigger asChild>
+              <button
+                className="icon-button menu-button"
+                aria-label="展开管理导航"
+                aria-expanded={open}
+              >
+                <Menu size={20} />
+              </button>
+            </Dialog.Trigger>
+            <span>你的图片，你的服务。</span>
+            <div>
+              <Link to="/" target="_blank">
+                访问网站 <ArrowUpRight size={14} />
+              </Link>
+              <Theme />
+            </div>
+          </header>
+          <main className="workspace">
+            <Outlet />
+          </main>
+        </div>
+      </div>
+    </Dialog.Root>
   );
 }
 function AuthPage({ setup = false }: { setup?: boolean }) {
@@ -258,6 +291,7 @@ function AuthPage({ setup = false }: { setup?: boolean }) {
           <Button disabled={action.pending}>
             {action.pending ? '正在处理…' : setup ? '创建管理员' : '登录工作台'}
           </Button>
+          <ActionFeedback action={action} />
         </form>
       </section>
       <Link className="muted" to="/">

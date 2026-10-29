@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useState } from 'react';
 import { ArrowRightLeft, Plus, RefreshCw } from 'lucide-react';
-import { api, json, useData, useAction, bytes } from './api';
-import { Button, Modal, Field, Check, Busy } from './components/ui';
+import { api, json, useData, useAction, usePolling, bytes } from './api';
+import { QueryFeedback, ActionFeedback, Button, Modal, Field, Check, Busy } from './components/ui';
 import type { StorageMigration, MigrationItem } from '../../../packages/shared/src/index';
 
 const states: Record<string, string> = {
@@ -61,6 +62,7 @@ export function MigrationCreateDialog({
   const enabled = storages.data?.items.filter((s: any) => s.enabled && s.id !== source) ?? [];
   return (
     <Modal
+      busy={action.pending}
       open
       onOpenChange={(v) => {
         if (!v && !action.pending) close();
@@ -71,7 +73,10 @@ export function MigrationCreateDialog({
       {storages.loading || folders.loading ? (
         <Busy />
       ) : storages.error || folders.error ? (
-        <p role="alert">{storages.error || folders.error}</p>
+        <>
+          <QueryFeedback query={storages} />
+          <QueryFeedback query={folders} />
+        </>
       ) : draft ? (
         <>
           <div className="migration-preview">
@@ -214,20 +219,31 @@ export function MigrationCreateDialog({
           </Button>
         </form>
       )}
+      <ActionFeedback action={action} />
     </Modal>
   );
 }
 export function StorageMigrations() {
+  const [params, setParams] = useSearchParams();
+  const selected = params.get('task') ?? '';
+  const setSelected = (id: string) => {
+    const next = new URLSearchParams(params);
+    next.set('task', id);
+    setParams(next);
+  };
   const [page, setPage] = useState(1),
-    [selected, setSelected] = useState(new URLSearchParams(location.search).get('task') ?? ''),
     [creating, setCreating] = useState(false);
   const list = useData<{ items: StorageMigration[]; total: number }>(
     `admin/storage-migrations?page=${page}`,
   );
-  useEffect(() => {
-    const timer = setInterval(() => void list.reload(), 3000);
-    return () => clearInterval(timer);
-  }, [list.reload]);
+  usePolling(
+    list.reload,
+    !!list.data?.items.some(
+      (task) =>
+        ['queued', 'running', 'pausing', 'canceling'].includes(task.state) ||
+        task.cleanup_state === 'cleaning',
+    ),
+  );
   return (
     <>
       <div className="section-heading">
@@ -256,8 +272,9 @@ export function StorageMigrations() {
           }}
         />
       )}
+      <QueryFeedback query={list} backgroundOnly />
       {list.error ? (
-        <p role="alert">{list.error}</p>
+        <QueryFeedback query={list} />
       ) : list.loading && !list.data ? (
         <Busy />
       ) : list.data?.items.length ? (
@@ -320,13 +337,14 @@ function MigrationDetails({ id, onChange }: { id: string; onChange: () => Promis
   const reload = async () => {
     await Promise.all([task.reload(), items.reload(), onChange()]);
   };
-  useEffect(() => {
-    const timer = setInterval(() => {
-      void task.reload();
-      void items.reload();
-    }, 3000);
-    return () => clearInterval(timer);
-  }, [task.reload, items.reload]);
+  usePolling(
+    async () => {
+      await Promise.all([task.reload(), items.reload()]);
+    },
+    !!task.data &&
+      (['queued', 'running', 'pausing', 'canceling'].includes(task.data.state) ||
+        task.data.cleanup_state === 'cleaning'),
+  );
   const execute = (verb: string) =>
     action.run(
       async () => {
@@ -336,12 +354,13 @@ function MigrationDetails({ id, onChange }: { id: string; onChange: () => Promis
       },
       verb === 'cleanup' ? '源副本清理已安排' : '任务状态已更新',
     );
-  if (task.error) return <p role="alert">{task.error}</p>;
+  if (task.error) return <QueryFeedback query={task} />;
   if (!task.data) return <Busy />;
   const t = task.data,
     finished = t.success_count + t.failed_count + t.skipped_count + t.canceled_count;
   return (
     <section className="panel migration-details">
+      <QueryFeedback query={task} />
       <div className="section-heading">
         <h3>迁往 {t.target_name}</h3>
         <span className="badge">{states[t.state] ?? t.state}</span>
@@ -355,7 +374,11 @@ function MigrationDetails({ id, onChange }: { id: string; onChange: () => Promis
         成功 {t.success_count} · 失败 {t.failed_count} · 跳过 {t.skipped_count} · 取消{' '}
         {t.canceled_count}
       </p>
-      {t.error && <p role="alert">{t.error}</p>}
+      {t.error && (
+        <p className="form-error" role="alert">
+          {t.error}
+        </p>
+      )}
       <div className="button-row migration-controls">
         {t.state === 'draft' && (
           <Button
@@ -444,8 +467,9 @@ function MigrationDetails({ id, onChange }: { id: string; onChange: () => Promis
           ))}
         </select>
       </Field>
+      <QueryFeedback query={items} backgroundOnly />
       {items.error ? (
-        <p role="alert">{items.error}</p>
+        <QueryFeedback query={items} />
       ) : items.loading && !items.data ? (
         <Busy />
       ) : (
@@ -493,6 +517,8 @@ function MigrationDetails({ id, onChange }: { id: string; onChange: () => Promis
         </Button>
       </div>
       <Modal
+        busy={action.pending}
+        cancelFocus
         open={!!confirm}
         onOpenChange={(v) => {
           if (!v && !action.pending) setConfirm(undefined);
@@ -509,13 +535,24 @@ function MigrationDetails({ id, onChange }: { id: string; onChange: () => Promis
             ? `${t.retained_count} 个源对象，约 ${bytes(t.retained_bytes)}。目标不可用时会保留源副本。`
             : `已成功迁移 ${t.success_count} 张，取消不会回滚这些图片。`}
         </p>
-        <Button
-          variant="destructive"
-          disabled={action.pending}
-          onClick={() => confirm && void execute(confirm)}
-        >
-          {confirm === 'cleanup' ? '确认清理源副本' : '确认取消迁移'}
-        </Button>
+        <div className="modal-actions">
+          <Button
+            data-cancel
+            variant="secondary"
+            disabled={action.pending}
+            onClick={() => setConfirm(undefined)}
+          >
+            返回
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={action.pending}
+            onClick={() => confirm && void execute(confirm)}
+          >
+            {confirm === 'cleanup' ? '确认清理源副本' : '确认取消迁移'}
+          </Button>
+        </div>
+        <ActionFeedback action={action} />
       </Modal>
     </section>
   );

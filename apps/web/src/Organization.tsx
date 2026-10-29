@@ -1,31 +1,36 @@
+import { useUrlTab } from './navigation';
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Sparkles } from 'lucide-react';
-import { api, json, useData, useAction } from './api';
-import { Button, Busy } from './components/ui';
+import { api, json, useData, useAction, usePolling } from './api';
+import { QueryFeedback, Button, Busy } from './components/ui';
 import { PageHeading } from './Resources';
 import { UploadCenter } from './components/UploadCenter';
 import { ManualClassification } from './ManualClassification';
 export function Organization() {
-  const [tab, setTab] = useState('upload'),
+  const [tab, setTab] = useUrlTab(
+      ['upload', 'manual', 'pending', 'running', 'completed', 'unmatched', 'failed', 'all'],
+      'upload',
+    ),
     [selected, setSelected] = useState<string[]>([]),
     [target, setTarget] = useState(''),
     [page, setPage] = useState(1),
     folders = useData('admin/folders'),
     action = useAction();
   const result = useData(
-    `admin/classification?status=${tab === 'upload' ? 'all' : tab}&page=${page}`,
+    `admin/classification?status=${['upload', 'manual'].includes(tab) ? 'all' : tab}&page=${page}`,
   );
   useEffect(() => {
     setPage(1);
     setSelected([]);
   }, [tab]);
-  useEffect(() => {
-    if (tab === 'pending' || tab === 'running') {
-      const timer = setInterval(() => void result.reload(), 3000);
-      return () => clearInterval(timer);
-    }
-  }, [tab, result.reload]);
+  usePolling(
+    result.reload,
+    !['upload', 'manual'].includes(tab) &&
+      !!result.data?.items.some((item: any) =>
+        ['pending', 'running'].includes(item.classificationStatus),
+      ),
+  );
   const labels: Record<string, string> = {
     pending: '等待分类',
     running: '正在分类',
@@ -42,7 +47,7 @@ export function Organization() {
           <Link to="/admin/settings?tab=ai">模型配置</Link>
         </Button>
       </PageHeading>
-      <div className="tabs">
+      <div className="tabs" aria-label="整理任务分类">
         {[
           ['upload', '上传中心'],
           ['manual', '手动任务'],
@@ -53,7 +58,12 @@ export function Organization() {
           ['failed', '失败任务'],
           ['all', '全部任务'],
         ].map(([key, label]) => (
-          <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key!)}>
+          <button
+            key={key}
+            className={tab === key ? 'active' : ''}
+            aria-current={tab === key ? 'page' : undefined}
+            onClick={() => setTab(key!)}
+          >
             {label}
           </button>
         ))}
@@ -64,7 +74,7 @@ export function Organization() {
         </section>
       ) : tab === 'manual' ? (
         folders.error ? (
-          <p role="alert">{folders.error}</p>
+          <QueryFeedback query={folders} />
         ) : folders.loading ? (
           <Busy />
         ) : (
@@ -121,10 +131,11 @@ export function Organization() {
               </Button>
             </div>
           )}
+          <QueryFeedback query={result} backgroundOnly />
           {result.loading && !result.data ? (
             <Busy />
           ) : result.error ? (
-            <p role="alert">{result.error}</p>
+            <QueryFeedback query={result} />
           ) : result.data?.items.length ? (
             <div className="panel table-wrap">
               <table className="organization-table">

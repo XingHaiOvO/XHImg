@@ -2,6 +2,13 @@ import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
+async function loginInteractions(page: import('@playwright/test').Page) {
+  const state = JSON.parse(await readFile('.cache/e2e-session.json', 'utf8'));
+  await page.context().addCookies(state.cookies);
+  await page.goto('/admin');
+  await expect(page.getByRole('heading', { name: '一切，井然有序。' })).toBeVisible();
+}
+
 test('install, login, folder upload, public gallery, random service, private transition and trash', async ({
   page,
   request,
@@ -20,6 +27,7 @@ test('install, login, folder upload, public gallery, random service, private tra
   await page.getByLabel('密码', { exact: true }).fill('browser-test-password-123');
   await page.getByRole('button', { name: '登录工作台' }).click();
   await expect(page.getByRole('heading', { name: '一切，井然有序。' })).toBeVisible();
+  await page.context().storageState({ path: '.cache/e2e-session.json' });
   await page.getByRole('link', { name: '资源文件夹', exact: true }).click();
   await page.getByRole('button', { name: '新建文件夹' }).click();
   const dialog = page.getByRole('dialog');
@@ -169,7 +177,7 @@ test('install, login, folder upload, public gallery, random service, private tra
   await page.getByRole('button', { name: '展开管理导航' }).click();
   await page.getByRole('link', { name: '设置中心', exact: true }).click();
   await expect(page.getByRole('heading', { name: '设置中心', exact: true })).toBeVisible();
-  await expect(page.locator('.sidebar')).toHaveCSS('transform', 'matrix(1, 0, 0, 1, -235, 0)');
+  await expect(page.locator('.desktop-sidebar')).toBeHidden();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/settings-mobile.png', fullPage: true });
   expect(browserErrors).toEqual([]);
@@ -230,7 +238,7 @@ test('processing settings, interrupted transfer, refresh/reselect resume and AI 
   await page.getByLabel('输出格式').selectOption('webp');
   await page.getByLabel('最大宽度（像素）').fill('640');
   await page.getByRole('button', { name: '保存处理策略' }).click();
-  await expect(page.getByRole('status')).toContainText('已保存');
+  await expect(page.locator('.notice[role=status]')).toContainText('已保存');
   await page.getByRole('button', { name: 'AI 模型', exact: true }).click();
   await page
     .getByLabel('API Base URL')
@@ -239,7 +247,7 @@ test('processing settings, interrupted transfer, refresh/reselect resume and AI 
   await page.getByLabel('启用 AI 自动分类').check();
   await page.getByLabel('旅行（私有）', { exact: true }).check();
   await page.getByRole('button', { name: '保存并测试模型' }).click();
-  await expect(page.getByRole('status')).toContainText('视觉输入和分类输出测试通过');
+  await expect(page.locator('.notice[role=status]')).toContainText('视觉输入和分类输出测试通过');
   await page.getByRole('link', { name: '智能整理', exact: true }).click();
   await page.getByRole('button', { name: '手动任务', exact: true }).click();
   await page.getByLabel('来源文件夹').selectOption({ label: '旅行' });
@@ -250,7 +258,7 @@ test('processing settings, interrupted transfer, refresh/reselect resume and AI 
   await page.getByLabel('选择 e2e-image.png').check();
   await page.screenshot({ path: 'test-results/manual-classification-desktop.png', fullPage: true });
   await page.getByRole('button', { name: '执行整理', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('已安排 1 张图片整理');
+  await expect(page.locator('.notice[role=status]')).toContainText('已安排 1 张图片整理');
   await expect
     .poll(
       async () => {
@@ -266,7 +274,7 @@ test('processing settings, interrupted transfer, refresh/reselect resume and AI 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByLabel('来源文件夹').selectOption({ label: '旅行' });
   await expect(page.getByText('e2e-image.png', { exact: true })).toBeVisible();
-  await expect(page.locator('.sidebar')).toHaveCSS('transform', 'matrix(1, 0, 0, 1, -235, 0)');
+  await expect(page.locator('.desktop-sidebar')).toBeHidden();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/manual-classification-mobile.png', fullPage: true });
   await page.setViewportSize({ width: 1280, height: 720 });
@@ -375,10 +383,10 @@ test('processing settings, interrupted transfer, refresh/reselect resume and AI 
   await page.getByLabel('选择 e2e-large.webp').check();
   await page.getByLabel('人工归档目标').selectOption('uncategorized');
   await page.getByRole('button', { name: '人工归档', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('已人工归档');
+  await expect(page.locator('.notice[role=status]')).toContainText('已人工归档');
   await page.screenshot({ path: 'test-results/p1-organization-desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator('.sidebar')).toHaveCSS('transform', 'matrix(1, 0, 0, 1, -235, 0)');
+  await expect(page.locator('.desktop-sidebar')).toBeHidden();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/p1-organization-mobile.png', fullPage: true });
   await page.request.put('/api/v1/admin/ai', {
@@ -576,10 +584,319 @@ test('storage migration previews selected and filtered images, preserves access 
     details.locator('.migration-items').getByText('e2e-image.png', { exact: true }),
   ).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator('.sidebar')).toHaveCSS('transform', 'matrix(1, 0, 0, 1, -235, 0)');
+  await expect(page.locator('.desktop-sidebar')).toBeHidden();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/storage-migration-mobile.png', fullPage: true });
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.screenshot({ path: 'test-results/storage-migration-desktop.png', fullPage: true });
   expect(errors).toEqual([]);
+});
+
+test('admin drawer, URL tabs, form failures and accessible destructive confirmation', async ({
+  page,
+}) => {
+  await loginInteractions(page);
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/admin/settings?tab=unknown&task=obsolete');
+  await expect(page).toHaveURL(/tab=storage$/);
+  const trigger = page.getByRole('button', { name: '展开管理导航' });
+  await trigger.click();
+  const drawer = page.getByRole('dialog', { name: '管理导航' });
+  await expect(drawer).toBeVisible();
+  await expect(page.locator('body')).toHaveCSS('overflow', 'hidden');
+  await page.keyboard.press('Shift+Tab');
+  expect(await drawer.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+  await page.screenshot({ path: 'test-results/admin-navigation-mobile.png', fullPage: true });
+  await page.keyboard.press('Escape');
+  await expect(drawer).toBeHidden();
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await page.locator('.navigation-overlay').click({ position: { x: 370, y: 400 } });
+  await expect(drawer).toBeHidden();
+  await trigger.click();
+  await drawer.getByRole('link', { name: '智能整理', exact: true }).click();
+  await expect(drawer).toBeHidden();
+  await page.getByRole('button', { name: '失败任务', exact: true }).click();
+  await expect(page).toHaveURL(/tab=failed/);
+  await page.reload();
+  await expect(page.getByRole('button', { name: '失败任务', exact: true })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await page.goto('/admin/settings?tab=migrations&task=not-selected');
+  await page.getByRole('button', { name: '图片处理', exact: true }).click();
+  await expect(page).toHaveURL(/tab=processing$/);
+  await page.getByRole('button', { name: 'AI 模型', exact: true }).click();
+  await expect(page).toHaveURL(/tab=ai$/);
+  await page.goBack();
+  await expect(page.getByRole('heading', { name: '图片处理', exact: true })).toBeVisible();
+  await page.goForward();
+  await expect(page.getByRole('heading', { name: 'AI 视觉模型' })).toBeVisible();
+  for (const width of [390, 768, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({ path: `test-results/admin-settings-${width}.png`, fullPage: true });
+  }
+  await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: 'dark' });
+  await page.evaluate(() => {
+    localStorage.setItem('theme', 'dark');
+  });
+  await page.reload();
+  await page.screenshot({ path: 'test-results/admin-settings-dark.png', fullPage: true });
+  await page.goto('/admin/folders');
+  await page.getByRole('button', { name: '新建文件夹', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '新建文件夹' });
+  await dialog.getByLabel('文件夹名称').fill('交互验证文件夹');
+  const originalTitle = await dialog
+    .getByLabel('自身权限', { exact: true })
+    .getAttribute('aria-describedby');
+  expect(originalTitle).toBeTruthy();
+  let posts = 0;
+  await page.route('**/api/v1/admin/folders', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    posts++;
+    await new Promise((done) => setTimeout(done, 600));
+    await route.fulfill({ status: 503, json: { error: { message: '受控保存失败，请重试' } } });
+  });
+  await dialog.getByRole('button', { name: '创建文件夹', exact: true }).click();
+  await dialog.locator('form').evaluate((form) => {
+    (form as HTMLFormElement).requestSubmit();
+    (form as HTMLFormElement).requestSubmit();
+  });
+  await expect(dialog.locator('.form-error')).toHaveText('受控保存失败，请重试');
+  expect(posts).toBe(1);
+  await expect(dialog.getByLabel('文件夹名称')).toHaveValue('交互验证文件夹');
+  await page.waitForTimeout(6200);
+  await expect(page.locator('.notice.error')).toContainText('受控保存失败');
+  await page.unroute('**/api/v1/admin/folders');
+  await dialog.getByRole('button', { name: '创建文件夹', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.locator('.notice.error')).toContainText('受控保存失败');
+  await page.locator('.notice.error').getByRole('button', { name: '关闭提示' }).click();
+  await page.getByRole('button', { name: /交互验证文件夹/ }).click();
+  await page.getByRole('tab', { name: '设置', exact: true }).click();
+  await page.getByRole('button', { name: '删除文件夹', exact: true }).click();
+  const confirmation = page.getByRole('dialog', { name: '确认操作' });
+  await expect(confirmation.getByRole('button', { name: '取消', exact: true })).toBeFocused();
+  await expect(confirmation).toContainText('交互验证文件夹');
+  await page.keyboard.press('Escape');
+  await expect(confirmation).toBeHidden();
+  await expect(page.getByRole('button', { name: '删除文件夹', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '删除文件夹', exact: true }).click();
+  await confirmation.getByRole('button', { name: '确认执行', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '所有图片', exact: true })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('admin refresh retains content and selection, ignores old searches and retries without data loss', async ({
+  page,
+}) => {
+  await loginInteractions(page);
+  await page.goto('/admin/folders');
+  const image = (await (await page.request.get('/api/v1/admin/images')).json()).items[0];
+  expect(image).toBeTruthy();
+  await page.getByLabel(`选择 ${image.name}`, { exact: true }).check();
+  const positionBeforeRefresh = await page.locator('.image-grid').boundingBox();
+  let mode = 'failure',
+    oldSeen = false;
+  await page.route('**/api/v1/admin/images?**', async (route) => {
+    const search = new URL(route.request().url()).searchParams.get('search');
+    if (search === 'old-query') {
+      oldSeen = true;
+      await new Promise((done) => setTimeout(done, 1200));
+      await route
+        .fulfill({ json: { items: [{ ...image, name: '迟到旧结果.png' }], total: 1 } })
+        .catch(() => {});
+    } else if (search === 'new-query') {
+      await route.fulfill({ json: { items: [{ ...image, name: '最新结果.png' }], total: 1 } });
+    } else if (mode === 'failure') {
+      await new Promise((done) => setTimeout(done, 600));
+      await route.fulfill({ status: 503, json: { error: { message: '受控刷新失败' } } });
+    } else await route.continue();
+  });
+  await page.getByRole('button', { name: '刷新图片', exact: true }).click();
+  await expect(page.getByLabel(`选择 ${image.name}`, { exact: true })).toBeChecked();
+  await expect(page.locator('.resource-content .refresh-status')).toBeVisible();
+  const positionDuringRefresh = await page.locator('.image-grid').boundingBox();
+  expect(positionDuringRefresh?.y).toBe(positionBeforeRefresh?.y);
+  await expect(page.locator('.resource-content .query-error')).toContainText(
+    '仍显示上次成功的数据',
+  );
+  await expect(page.getByLabel(`选择 ${image.name}`, { exact: true })).toBeChecked();
+  mode = 'success';
+  await page.getByRole('button', { name: '重试', exact: true }).click();
+  await expect(page.locator('.resource-content .query-error')).toHaveCount(0);
+  await expect(page.getByLabel(`选择 ${image.name}`, { exact: true })).toBeChecked();
+  const search = page.getByRole('textbox', { name: '搜索当前图片' });
+  await search.fill('old-query');
+  await expect.poll(() => oldSeen).toBe(true);
+  await expect(page.getByLabel(`选择 ${image.name}`, { exact: true })).toHaveCount(0);
+  await search.fill('new-query');
+  await expect(page.getByText('最新结果.png', { exact: true })).toBeVisible();
+  await expect(page.locator('.selection-bar')).toHaveCount(0);
+  await page.waitForTimeout(1400);
+  await expect(page.getByText('迟到旧结果.png', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('最新结果.png', { exact: true })).toBeVisible();
+  for (const width of [390, 768, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({ path: `test-results/admin-resources-${width}.png`, fullPage: true });
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.folder-tree')).toBeHidden();
+  await page.locator('.folder-tree-toggle').click();
+  await expect(page.locator('.folder-tree')).toBeVisible();
+  await page.unroute('**/api/v1/admin/images?**');
+  let firstLoad = true;
+  await page.route('**/api/v1/admin/images?**', async (route) => {
+    if (firstLoad) {
+      firstLoad = false;
+      await route.fulfill({ status: 503, json: { error: { message: '首次加载失败' } } });
+    } else await route.continue();
+  });
+  await page.goto('/admin/trash');
+  await expect(page.locator('.query-error')).toContainText('首次加载失败');
+  await page.getByRole('button', { name: '重试', exact: true }).click();
+  await expect(page.locator('.query-error')).toHaveCount(0);
+});
+
+test('task polling is serial, pauses when hidden and stops after active tasks finish', async ({
+  page,
+}) => {
+  await loginInteractions(page);
+  let calls = 0,
+    inFlight = 0,
+    maximum = 0,
+    completed = false;
+  await page.route('**/api/v1/admin/classification?**', async (route) => {
+    calls++;
+    inFlight++;
+    maximum = Math.max(maximum, inFlight);
+    if (calls > 1) await new Promise((done) => setTimeout(done, 3500));
+    inFlight--;
+    await route.fulfill({
+      json: {
+        items: [
+          {
+            id: 'polling-fixture',
+            name: '长任务状态验证'.repeat(12) + '.png',
+            folderId: 'uncategorized',
+            classificationStatus: completed ? 'completed' : 'pending',
+          },
+        ],
+        total: 1,
+      },
+    });
+  });
+  await page.goto('/admin/organize?tab=all');
+  await expect(page.getByText('等待分类', { exact: true })).toBeVisible();
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  const hiddenCalls = calls;
+  await page.waitForTimeout(3300);
+  expect(calls).toBe(hiddenCalls);
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await expect.poll(() => calls).toBe(hiddenCalls + 1);
+  await page.waitForTimeout(3100);
+  expect(calls).toBe(hiddenCalls + 1);
+  completed = true;
+  await expect(page.getByText('已归档', { exact: true })).toBeVisible({ timeout: 10000 });
+  const finalCalls = calls;
+  await page.waitForTimeout(3300);
+  expect(calls).toBe(finalCalls);
+  expect(maximum).toBe(1);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await expect
+    .poll(() =>
+      page.locator('.tabs .active').evaluate((el) => {
+        const r = el.getBoundingClientRect(),
+          p = el.parentElement!.getBoundingClientRect();
+        return r.left >= p.left - 1 && r.right <= p.right + 1;
+      }),
+    )
+    .toBe(true);
+  await page.screenshot({ path: 'test-results/admin-organization-mobile.png', fullPage: true });
+});
+
+test('migration controls and key revocation use confirmations and retain retry actions', async ({
+  page,
+}) => {
+  await loginInteractions(page);
+  const csrf = (await (await page.request.get('/api/v1/auth/me')).json()).csrf;
+  const headers = { origin: 'http://127.0.0.1:9522', 'x-csrf-token': csrf };
+  const image = (await (await page.request.get('/api/v1/admin/images')).json()).items[0];
+  const target = await (
+    await page.request.post('/api/v1/admin/storage-backends', {
+      headers,
+      data: { name: '交互控制目标', type: 'local', config: {} },
+    })
+  ).json();
+  const draft = await (
+    await page.request.post('/api/v1/admin/storage-migrations', {
+      headers,
+      data: { targetStorageId: target.id, imageIds: [image.id] },
+    })
+  ).json();
+  expect(draft.id).toBeTruthy();
+  let state = 'running',
+    failed = 0;
+  const actions: string[] = [];
+  await page.route(`**/api/v1/admin/storage-migrations/${draft.id}`, (route) =>
+    route.fulfill({ json: { ...draft, state, failed_count: failed } }),
+  );
+  await page.route(`**/api/v1/admin/storage-migrations/${draft.id}/*`, async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    const action = route.request().url().split('/').pop()!;
+    actions.push(action);
+    state = (
+      { pause: 'paused', resume: 'running', cancel: 'canceled', retry: 'queued' } as Record<
+        string,
+        string
+      >
+    )[action];
+    failed = 0;
+    await route.fulfill({ json: { ...draft, state, failed_count: failed } });
+  });
+  await page.goto(`/admin/settings?tab=migrations&task=${draft.id}`);
+  const details = page.locator('.migration-details');
+  await details.getByRole('button', { name: '暂停迁移', exact: true }).click();
+  await expect(details.getByRole('button', { name: '继续迁移', exact: true })).toBeVisible();
+  await details.getByRole('button', { name: '继续迁移', exact: true }).click();
+  await details.getByRole('button', { name: '取消迁移', exact: true }).click();
+  const migrationConfirm = page.getByRole('dialog', { name: '确认取消迁移' });
+  await migrationConfirm.getByRole('button', { name: '关闭', exact: true }).click();
+  expect(actions).toEqual(['pause', 'resume']);
+  await details.getByRole('button', { name: '取消迁移', exact: true }).click();
+  await migrationConfirm.getByRole('button', { name: '确认取消迁移', exact: true }).click();
+  await expect(
+    details.locator('.section-heading .badge').filter({ hasText: '已取消' }),
+  ).toBeVisible();
+  state = 'failed';
+  failed = 1;
+  await details.getByRole('button', { name: '刷新任务', exact: true }).click();
+  await details.getByRole('button', { name: '重试失败图片', exact: true }).click();
+  await expect(details.getByRole('button', { name: '暂停迁移', exact: true })).toBeVisible();
+  expect(actions).toEqual(['pause', 'resume', 'cancel', 'retry']);
+  await page.goto('/admin/settings?tab=keys');
+  const key = page.getByRole('row').filter({ hasText: '独立应用' });
+  await key.getByRole('button', { name: '撤销', exact: true }).click();
+  const confirm = page.getByRole('dialog', { name: '确认操作' });
+  await expect(confirm).toContainText('独立应用');
+  await confirm.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(key.getByRole('button', { name: '撤销', exact: true })).toBeEnabled();
+  await key.getByRole('button', { name: '撤销', exact: true }).click();
+  await confirm.getByRole('button', { name: '确认执行', exact: true }).click();
+  await expect(key.getByRole('button', { name: '撤销', exact: true })).toBeDisabled();
 });

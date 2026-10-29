@@ -2325,3 +2325,247 @@ summary {
     scroll-behavior: auto !important;
   }
 }
+
+/* Admin interaction improvements: retain the existing palette and layout. */
+.query-feedback {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+}
+.query-feedback .refresh-status {
+  margin: 0;
+}
+.modal-content {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.modal-heading {
+  padding: 26px 54px 20px 28px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.modal-heading h2 {
+  font-size: 23px;
+}
+.modal-heading p {
+  margin-top: 8px;
+  line-height: 1.6;
+}
+.modal-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+  padding: 22px 28px 28px;
+}
+.modal-body form {
+  margin-top: 0;
+}
+.modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.modal-body form > .button-row:last-of-type {
+  position: sticky;
+  bottom: -28px;
+  background: var(--surface);
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+.form-status,
+.refresh-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  margin: 10px 0;
+}
+.form-error,
+.query-error {
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  background: var(--surface);
+  border-radius: 10px;
+  padding: 12px;
+  margin: 12px 0;
+  overflow-wrap: anywhere;
+}
+.query-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.query-error .button {
+  flex-shrink: 0;
+}
+.notice-stack {
+  position: fixed;
+  z-index: 300;
+  bottom: max(24px, env(safe-area-inset-bottom));
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(460px, calc(100vw - 32px));
+  max-height: 50dvh;
+  overflow-y: auto;
+}
+.notice-stack .notice {
+  position: static;
+  transform: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  max-width: none;
+  cursor: default;
+  padding: 12px 14px;
+  overflow-wrap: anywhere;
+}
+.notice-stack .notice .icon-button {
+  color: inherit;
+  min-width: 36px;
+  min-height: 36px;
+  margin-left: auto;
+}
+.notice-stack .notice span {
+  min-width: 0;
+}
+.navigation-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: #0006;
+}
+.sidebar.mobile-sidebar {
+  transform: none;
+  z-index: 91;
+  width: min(300px, calc(100vw - 44px));
+  height: 100dvh;
+  padding-top: 64px;
+  overflow-y: auto;
+}
+.navigation-close {
+  position: absolute;
+  right: 16px;
+  top: 16px;
+}
+.folder-tree-toggle {
+  display: none;
+}
+.workspace,
+.resource-content,
+.folder-title > div,
+.section-heading > div,
+.panel,
+.storage-card,
+.admin-service {
+  min-width: 0;
+}
+.workspace h1,
+.workspace h2,
+.workspace h3,
+.workspace td,
+.workspace small,
+.storage-card p,
+.migration-task strong,
+.upload-entry strong {
+  overflow-wrap: anywhere;
+}
+.selection-bar {
+  flex-wrap: wrap;
+}
+.selection-bar select {
+  max-width: 100%;
+}
+.tabs {
+  max-width: 100%;
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  scroll-padding-inline: 16px;
+}
+.tabs button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+@media (max-width: 650px) {
+  .sidebar.desktop-sidebar {
+    display: none;
+  }
+  .folder-tree-toggle {
+    display: flex;
+    margin-bottom: 12px;
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .resource-layout .folder-tree {
+    display: none;
+  }
+  .resource-layout .folder-tree.tree-open {
+    display: flex;
+    flex-direction: column;
+    max-height: 45dvh;
+    overflow-y: auto;
+  }
+  .modal-content {
+    width: calc(100% - 20px);
+    max-height: calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    padding: 0;
+  }
+  .modal-heading {
+    padding: 20px 48px 16px 18px;
+  }
+  .modal-heading h2 {
+    font-size: 21px;
+  }
+  .modal-body {
+    padding: 18px;
+  }
+  .modal-body form > .button-row:last-of-type {
+    bottom: -18px;
+  }
+  .modal-actions .button {
+    flex: 1;
+  }
+  .notice-stack {
+    right: 16px;
+    bottom: max(16px, env(safe-area-inset-bottom));
+  }
+  .selection-bar {
+    gap: 10px;
+  }
+  .selection-bar > span {
+    flex-basis: 100%;
+  }
+  .selection-bar select {
+    flex: 1 1 60%;
+    min-width: 0;
+  }
+  .selection-bar .button {
+    min-height: 40px;
+  }
+  .organization-table td {
+    min-width: 110px;
+  }
+  .organization-table td:nth-child(2) {
+    min-width: 160px;
+  }
+  .button-row {
+    flex-wrap: wrap;
+  }
+  .tabs.settings-tabs {
+    display: flex;
+  }
+  .tabs.settings-tabs button {
+    width: auto;
+  }
+}
