@@ -17,6 +17,8 @@ import { registerUploads } from './uploads.js';
 import { registerRandom } from './random.js';
 import { Worker } from './jobs.js';
 import { documentedApi } from './openapi.js';
+import { registerP1 } from './p1-routes.js';
+import { registerResumable } from './resumable.js';
 
 export async function createApp(config: Config) {
   const db = new Store(config.dir),
@@ -91,7 +93,7 @@ export async function createApp(config: Config) {
     },
   });
   await app.register(multipart, {
-    limits: { fileSize: 20 * 1024 * 1024, files: 1, fields: 0, parts: 1 },
+    limits: { fileSize: 100 * 1024 * 1024, files: 1, fields: 0, parts: 1 },
   });
   await app.register(swagger, {
     openapi: {
@@ -188,6 +190,8 @@ export async function createApp(config: Config) {
   registerResources(app, ctx);
   registerUploads(app, ctx);
   registerRandom(app, ctx);
+  registerP1(app, ctx);
+  await registerResumable(app, ctx);
   app.get('/health', async () => {
     db.one('SELECT 1');
     return { status: 'ok', version: '0.1.0' };

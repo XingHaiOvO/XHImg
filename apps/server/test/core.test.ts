@@ -617,6 +617,7 @@ test('private service grant does not grant private image access; links revoke wi
 test('upload rejects unsupported, corrupt, oversized and excessive pixels, without published rows', async () => {
   const f = await fixture();
   try {
+    f.ctx.db.set('maxUploadMB', 20);
     assert.equal(
       (await f.upload('uncategorized', 'private', Buffer.from('<svg/>'))).statusCode,
       400,

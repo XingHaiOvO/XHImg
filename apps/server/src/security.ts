@@ -121,6 +121,7 @@ export class Access {
   }
   read(actor: Actor, image: Row) {
     if (image.deleted_at || image.state !== 'ready') return false;
+    if (image.publication_hold && actor.type !== 'admin') return false;
     if (image.effective_visibility === 'public') return true;
     return (
       this.has(actor, 'read') &&

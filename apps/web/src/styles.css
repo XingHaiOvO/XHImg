@@ -2114,6 +2114,114 @@ form > .button {
     padding: 15px 17px;
   }
 }
+.upload-center details,
+.folder-panel details,
+.modal-content details {
+  margin: 18px 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px;
+}
+summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 550;
+}
+.upload-center .dropzone {
+  margin-top: 20px;
+}
+.processing-editor p {
+  font-size: 12px;
+}
+.processing-editor fieldset:disabled {
+  opacity: 0.6;
+}
+.upload-queue .button-row {
+  width: 100%;
+}
+.upload-queue .button {
+  min-height: 32px;
+  padding: 6px 10px;
+  font-size: 11px;
+}
+.resume-list {
+  margin-top: 25px;
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+}
+.resume-list > p {
+  font-size: 12px;
+  margin: 8px 0 15px;
+}
+.resume-list > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 0;
+}
+.resume-list > div > div {
+  flex: 1;
+  min-width: 0;
+}
+.resume-list strong {
+  font-size: 12px;
+  font-weight: 550;
+  display: block;
+  overflow-wrap: anywhere;
+}
+.resume-list small {
+  color: var(--muted);
+  display: block;
+  margin-top: 4px;
+}
+.upload-center > .form-grid {
+  margin-top: 0;
+}
+.manual-task-thumbnail {
+  width: 72px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+@media (max-width: 640px) {
+  .organization-table thead {
+    display: none;
+  }
+  .organization-table,
+  .organization-table tbody {
+    display: block;
+  }
+  .organization-table tr {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr);
+    gap: 3px 12px;
+    padding: 18px;
+    border-bottom: 1px solid var(--line);
+  }
+  .organization-table tr:last-child {
+    border-bottom: 0;
+  }
+  .organization-table td {
+    display: block;
+    border: 0;
+    padding: 4px 0;
+  }
+  .organization-table td:first-child {
+    grid-row: 1 / 5;
+  }
+  .organization-table td:not(:first-child) {
+    grid-column: 2;
+  }
+  .organization-table td:nth-child(3)::before {
+    content: '状态：';
+    color: var(--muted);
+  }
+  .organization-table td:nth-child(4)::before {
+    content: '归属：';
+    color: var(--muted);
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

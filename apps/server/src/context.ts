@@ -139,6 +139,10 @@ export class Context {
       deletedAt: row.deleted_at,
       state: row.state,
       thumbnailState: row.thumbnail_state,
+      processingStatus: row.processing_status,
+      classificationStatus: row.classification_status,
+      hasOriginal: !!row.source_key,
+      publicationHold: !!row.publication_hold,
       url: `/i/${row.id}`,
       thumbnailUrl: `/t/${row.id}`,
     };
@@ -151,7 +155,7 @@ export class Context {
         row.id,
       )!.n,
       size: this.db.one(
-        'SELECT COALESCE(SUM(size),0) n FROM images WHERE folder_id=? AND deleted_at IS NULL',
+        'SELECT COALESCE(SUM(size+CASE WHEN source_key IS NOT NULL AND source_key<>object_key THEN source_size ELSE 0 END),0) n FROM images WHERE folder_id=? AND deleted_at IS NULL',
         row.id,
       )!.n,
     };
@@ -246,7 +250,7 @@ export class Context {
   }
   urls(image: Row, actor: Actor, serviceId?: string) {
     const sign = (variant: 'original' | 'thumbnail') =>
-      image.effective_visibility === 'public'
+      image.effective_visibility === 'public' && !image.publication_hold
         ? ''
         : `?sig=${this.signature(image, actor, variant, serviceId)}`;
     return {

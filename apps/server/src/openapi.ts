@@ -5,6 +5,18 @@ const string = { type: 'string' },
   boolean = { type: 'boolean' },
   nullable = { type: 'string', nullable: true };
 const vis = { type: 'string', enum: ['public', 'private'] };
+const processing = {
+  type: 'object',
+  properties: {
+    enabled: { type: 'boolean', default: false },
+    compress: { type: 'boolean', default: true },
+    targetFormat: { type: 'string', enum: ['keep', 'jpg', 'png', 'webp'] },
+    quality: { type: 'integer', minimum: 1, maximum: 100, default: 80 },
+    maxWidth: { type: 'integer', minimum: 1, maximum: 40000, nullable: true },
+    maxHeight: { type: 'integer', minimum: 1, maximum: 40000, nullable: true },
+    preserveOriginal: { type: 'boolean', default: true },
+  },
+};
 const object = (properties: Record<string, any>, required: string[] = []) => ({
   type: 'object',
   properties,
@@ -97,7 +109,43 @@ const bodies: Record<string, any> = {
     ['currentPassword', 'password'],
   ),
   'post /api/v1/admin/folders': { ...folder, required: ['name'] },
-  'patch /api/v1/admin/folders/{id}': folder,
+  'patch /api/v1/admin/folders/{id}': {
+    ...folder,
+    properties: {
+      ...folder.properties,
+      processingPolicy: { ...processing, nullable: true },
+      aiEnabled: boolean,
+    },
+  },
+  'put /api/v1/admin/processing': object(
+    { policy: processing, maxUploadMB: { type: 'integer', minimum: 1, maximum: 100 } },
+    ['policy', 'maxUploadMB'],
+  ),
+  'post /api/v1/admin/images/{id}/reprocess': object({ processing }),
+  'put /api/v1/admin/ai': object({
+    enabled: boolean,
+    baseUrl: string,
+    model: string,
+    apiKey: { ...string, writeOnly: true, description: '省略保留已有值；空字符串清除。' },
+    prompt: string,
+    rules: string,
+    folderIds: { type: 'array', items: string, maxItems: 100 },
+    timeoutSeconds: { type: 'integer', minimum: 1, maximum: 120, default: 60 },
+    retries: { type: 'integer', minimum: 0, maximum: 2, default: 2 },
+    jsonMode: boolean,
+  }),
+  'post /api/v1/admin/classification': object(
+    {
+      ids: { type: 'array', items: string, minItems: 1, maxItems: 100 },
+      skipUnavailable: {
+        type: 'boolean',
+        default: false,
+        description:
+          '手动任务跳过已删除、不可用及正在处理或分类的图片；响应 queued、skipped。重复ID仅计一次。',
+      },
+    },
+    ['ids'],
+  ),
   'patch /api/v1/admin/images/{id}': image,
   'post /api/v1/admin/images/batch': object(
     {
@@ -115,7 +163,10 @@ const bodies: Record<string, any> = {
       name: string,
       permissions: {
         type: 'array',
-        items: { type: 'string', enum: ['read', 'upload', 'private:read', 'random'] },
+        items: {
+          type: 'string',
+          enum: ['read', 'upload', 'private:read', 'random', 'ai:classify'],
+        },
       },
       grants: { type: 'array', items: grant },
       expires: { type: 'integer', nullable: true },
@@ -187,10 +238,97 @@ export function documentedApi(app: FastifyInstance) {
         parameters.push(
           parameter('visibility', { ...vis, default: 'private' }),
           parameter('storageId', string),
+          parameter('processing', string, 'JSON 对象，只覆盖提交字段；请求 > 文件夹 > 系统。'),
+          parameter(
+            'classify',
+            boolean,
+            '显式指定文件夹默认不自动分类；密钥需 ai:classify 和目标上传范围。',
+          ),
         );
         op.description =
-          '单文件最大20MB，JPG/PNG/WebP，最多4000万像素，不接受动画。参数通过查询字符串传递。';
-        op.responses = { '201': { description: '原图持久化并提交图片记录，缩略图后台生成。' } };
+          '单文件默认最大100MB，可由管理员调低；JPG/PNG/WebP，最多4000万像素，不接受动画。参数通过查询字符串传递。';
+        op.responses = {
+          '201': { description: '未启用异步处理时，保留原响应。' },
+          '202': {
+            description:
+              '处理或分类已排队；包含 uploadId、imageId、statusUrl。完成前隔离公开访问。',
+          },
+        };
+      }
+      if (path.startsWith('/api/v1/resumable')) {
+        op.security = [{ apiKey: [] }, { adminSession: [] }];
+        parameters.push({
+          name: 'Tus-Resumable',
+          in: 'header',
+          required: true,
+          schema: { type: 'string', enum: ['1.0.0'] },
+        });
+        if (method === 'post') {
+          parameters.push(
+            {
+              name: 'Upload-Length',
+              in: 'header',
+              required: true,
+              schema: { type: 'integer', minimum: 1, maximum: 104857600 },
+            },
+            {
+              name: 'Upload-Metadata',
+              in: 'header',
+              required: true,
+              schema: string,
+              description:
+                'tus Base64 元数据：filename、sha256 必填；folderId、storageId、visibility、processing(JSON)、classify 可选。',
+            },
+          );
+          op.responses = { '201': { description: '已创建；Location 为续传资源地址。' } };
+        }
+        if (method === 'patch') {
+          parameters.push(
+            {
+              name: 'Upload-Offset',
+              in: 'header',
+              required: true,
+              schema: { type: 'integer', minimum: 0 },
+            },
+            {
+              name: 'X-Chunk-SHA256',
+              in: 'header',
+              required: true,
+              schema: { type: 'string', pattern: '^[a-fA-F0-9]{64}$' },
+            },
+          );
+          op.requestBody = {
+            required: true,
+            content: {
+              'application/offset+octet-stream': {
+                schema: {
+                  type: 'string',
+                  format: 'binary',
+                  description: '每片最多4MiB；校验成功才追加并确认偏移。',
+                },
+              },
+            },
+          };
+          op.responses = {
+            '204': {
+              description: '字节追加成功；Upload-Offset 为确认偏移。收齐后异步校验、处理、分类。',
+            },
+            '460': { description: '分片 SHA-256 不匹配，偏移不变。' },
+          };
+        }
+        if (method === 'head')
+          op.responses = {
+            '200': { description: 'Upload-Offset / Upload-Length 为持久化偏移与总长度。' },
+          };
+        if (method === 'delete')
+          op.responses = { '204': { description: '取消未完成传输。已发布图片请使用回收站。' } };
+        op.description =
+          '需当前上传权限、归属及范围；管理员写请求携带 CSRF。未宣称 tus Checksum 扩展；协议错误可能为纯文本。24小时有效。';
+      }
+      if (path.startsWith('/api/v1/uploads/')) {
+        op.security = [{ apiKey: [] }, { adminSession: [] }];
+        op.description =
+          '仅上传归属者或管理员，仍校验当前授权。状态 created/uploading/validating/processing/classifying/ready/failed/expired/canceled；GET 包含 uploadId、imageId、offset、length、expiresAt、error、image。retry 重试校验、处理或分类；DELETE 取消未完成任务。';
       }
       if (method !== 'get' && method !== 'head' && path.startsWith('/api/v1/admin'))
         parameters.push({ name: 'X-CSRF-Token', in: 'header', required: true, schema: string });

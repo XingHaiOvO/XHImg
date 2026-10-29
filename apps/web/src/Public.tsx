@@ -443,7 +443,7 @@ export function Docs() {
         <h2>授权上传</h2>
         <p>
           每次请求一个文件。仅接受 JPG、PNG、WebP，最大
-          20MB，不接受动画。批量上传请分别提交；文件夹专属接口会固定目标文件夹。
+          100MB（后台可调低），不接受动画。批量上传请分别提交；文件夹专属接口会固定目标文件夹。启用处理或分类时返回202及状态查询地址。
         </p>
         <Code
           text={`curl -X POST '${absolute('/api/v1/upload')}?folderId=YOUR_FOLDER_ID&visibility=private' \\\n  -H 'Authorization: Bearer YOUR_API_KEY' \\\n  -F 'file=@photo.jpg'\n\nPOST /api/v1/folders/{folderId}/upload\nGET /api/v1/folders/{folderId}/images?page=1&limit=40`}

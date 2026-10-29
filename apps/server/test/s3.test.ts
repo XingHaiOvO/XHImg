@@ -135,6 +135,25 @@ test('real AWS SDK streams objects through an isolated S3 HTTP fixture and handl
       await worker.tick();
       assert.equal(ctx.image(image.id).thumbnail_state, 'ready');
       assert.equal((await app.inject({ url: image.thumbnailUrl, headers })).statusCode, 200);
+      const processed = await app.inject({
+        method: 'POST',
+        url: `/api/v1/admin/images/${image.id}/reprocess`,
+        headers,
+        payload: { processing: { targetFormat: 'webp' } },
+      });
+      assert.equal(processed.statusCode, 200, processed.body);
+      await worker.tick();
+      await worker.tick();
+      assert.equal(ctx.image(image.id).format, 'webp');
+      assert.equal(
+        (await sharp((await app.inject({ url: image.url, headers })).rawPayload).metadata()).format,
+        'webp',
+      );
+      assert.deepEqual(
+        (await app.inject({ url: `/api/v1/admin/images/${image.id}/original`, headers }))
+          .rawPayload,
+        png,
+      );
       unavailable = true;
       const failure = await app.inject({
         method: 'POST',

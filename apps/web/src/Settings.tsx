@@ -3,13 +3,16 @@ import { Plus, HardDrive, Cloud, KeyRound, ShieldCheck, Copy } from 'lucide-reac
 import { api, json, useData, useAction, useNotice, bytes, copy } from './api';
 import { Button, Field, Check, Modal, Busy } from './components/ui';
 import { PageHeading } from './Resources';
+import { ProcessingSettings, AISettings } from './P1Settings';
 export function SettingsPage() {
-  const [tab, setTab] = useState('存储后端');
+  const [tab, setTab] = useState(
+    new URLSearchParams(location.search).get('tab') === 'ai' ? 'AI 模型' : '存储后端',
+  );
   return (
     <>
       <PageHeading title="设置中心" description="基础设施，安静地为你的图片服务。" />
       <div className="tabs settings-tabs">
-        {['存储后端', 'API Key', '站点设置', '管理员安全'].map((t) => (
+        {['存储后端', 'API Key', '图片处理', 'AI 模型', '站点设置', '管理员安全'].map((t) => (
           <button key={t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>
             {t}
           </button>
@@ -21,6 +24,10 @@ export function SettingsPage() {
         <KeySettings />
       ) : tab === '站点设置' ? (
         <SiteSettings />
+      ) : tab === '图片处理' ? (
+        <ProcessingSettings />
+      ) : tab === 'AI 模型' ? (
+        <AISettings />
       ) : (
         <SecuritySettings />
       )}
@@ -457,6 +464,7 @@ function KeyEditor({ open, close, folders, services, storages, done }: any) {
             ['upload', '图片上传'],
             ['private:read', '私有图片读取'],
             ['random', '随机图服务调用'],
+            ['ai:classify', 'AI 图片分类'],
           ].map(([key, label]) => (
             <Check
               key={key}

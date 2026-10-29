@@ -1,6 +1,6 @@
 export type Visibility = 'public' | 'private';
 export type ResponseMode = 'image' | 'redirect' | 'json';
-export type Permission = 'read' | 'upload' | 'private:read' | 'random';
+export type Permission = 'read' | 'upload' | 'private:read' | 'random' | 'ai:classify';
 export interface Grant {
   kind: 'all' | 'folder' | 'service' | 'storage';
   resourceId: string;
@@ -27,6 +27,10 @@ export interface ImageInfo {
   deletedAt: number | null;
   state: string;
   thumbnailState: string;
+  processingStatus?: string;
+  classificationStatus?: string;
+  publicationHold?: boolean;
+  hasOriginal?: boolean;
   url: string;
   thumbnailUrl: string;
 }

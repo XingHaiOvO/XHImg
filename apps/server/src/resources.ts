@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { Context, params, query, paging, name, visibility } from './context.js';
 import { fail, id } from './security.js';
 import { s3ConfigSchema } from './storage.js';
+import { policyPatch } from './policies.js';
 
 const folderBody = z.object({
   name,
@@ -21,6 +22,8 @@ const folderPatch = z.object({
   storageId: z.string().nullable().optional(),
   sortOrder: z.number().int().optional(),
   coverId: z.string().nullable().optional(),
+  processingPolicy: policyPatch.nullable().optional(),
+  aiEnabled: z.boolean().optional(),
 });
 const imagePatch = z.object({
   name: name.optional(),
@@ -70,6 +73,7 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
       (b.parentId !== undefined || b.visibility !== undefined || b.name !== undefined)
     )
       fail(400, 'SYSTEM_FOLDER', '未分类文件夹不可移动、改名或公开');
+    if (folder.system && b.aiEnabled) fail(400, 'SYSTEM_FOLDER', '未分类文件夹不作为 AI 目标');
     if (b.parentId) {
       ctx.folder(b.parentId);
       if (ctx.access.descendants(folder.id).includes(b.parentId))
@@ -97,10 +101,22 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
       storageId: 'storage_id',
       sortOrder: 'sort_order',
       coverId: 'cover_id',
+      processingPolicy: 'processing_policy',
+      aiEnabled: 'ai_enabled',
     };
     ctx.db.tx(() => {
       for (const [key, value] of Object.entries(b))
-        ctx.db.run(`UPDATE folders SET ${fields[key]}=? WHERE id=?`, value, folder.id);
+        ctx.db.run(
+          `UPDATE folders SET ${fields[key]}=? WHERE id=?`,
+          key === 'processingPolicy'
+            ? value === null
+              ? null
+              : JSON.stringify(value)
+            : key === 'aiEnabled'
+              ? +!!value
+              : value,
+          folder.id,
+        );
       ctx.access.refresh();
     });
     ctx.invalidate();
@@ -114,7 +130,17 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
       ctx.db.one('SELECT id FROM folders WHERE parent_id=? LIMIT 1', f.id)
     )
       fail(409, 'FOLDER_NOT_EMPTY', '请先移走或删除全部内容，包括回收站图片');
-    ctx.db.run('DELETE FROM folders WHERE id=?', f.id);
+    if (
+      ctx.db.one(
+        "SELECT id FROM upload_sessions WHERE folder_id=? AND state NOT IN ('ready','expired','canceled') LIMIT 1",
+        f.id,
+      )
+    )
+      fail(409, 'UPLOAD_IN_PROGRESS', '文件夹仍有未完成上传，请先完成或取消');
+    ctx.db.tx(() => {
+      ctx.db.run('DELETE FROM upload_sessions WHERE folder_id=?', f.id);
+      ctx.db.run('DELETE FROM folders WHERE id=?', f.id);
+    });
     ctx.invalidate();
     return { ok: true };
   });
@@ -128,7 +154,7 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
     ];
     const args: any[] = [];
     if (actor.type !== 'admin') {
-      conditions.push("state='ready'");
+      conditions.push("state='ready'", 'publication_hold=0');
       if (
         actor.type === 'anonymous' ||
         !ctx.access.has(actor, 'read') ||
@@ -229,6 +255,13 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
           k === 'tags' ? JSON.stringify(v) : v,
           img.id,
         );
+      if (b.folderId !== undefined)
+        ctx.db.run(
+          "UPDATE images SET organization_version=organization_version+1,classification_status=CASE WHEN classification_status IN ('pending','running') THEN 'canceled' ELSE classification_status END,publication_hold=CASE WHEN state='ready' THEN 0 ELSE publication_hold END WHERE id=?",
+          img.id,
+        );
+      if (b.folderId !== undefined && img.state === 'ready')
+        ctx.db.run("UPDATE upload_sessions SET state='ready',error=NULL WHERE image_id=?", img.id);
       ctx.access.refresh();
     });
     ctx.invalidate();
@@ -257,7 +290,16 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
             imageId,
           );
         if (b.action === 'move')
-          ctx.db.run('UPDATE images SET folder_id=? WHERE id=?', b.folderId, imageId);
+          ctx.db.run(
+            "UPDATE images SET folder_id=?,organization_version=organization_version+1,classification_status=CASE WHEN classification_status IN ('pending','running') THEN 'canceled' ELSE classification_status END,publication_hold=CASE WHEN state='ready' THEN 0 ELSE publication_hold END WHERE id=?",
+            b.folderId,
+            imageId,
+          );
+        if (b.action === 'move' && img.state === 'ready')
+          ctx.db.run(
+            "UPDATE upload_sessions SET state='ready',error=NULL WHERE image_id=?",
+            imageId,
+          );
         if (b.action === 'visibility')
           ctx.db.run('UPDATE images SET visibility=? WHERE id=?', b.visibility, imageId);
       }
@@ -320,7 +362,7 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
     items: ctx.db.all('SELECT * FROM storage_backends').map((row) => ({
       ...ctx.storage.safe(row),
       ...ctx.db.one(
-        'SELECT COUNT(*) count,COALESCE(SUM(size),0) size FROM images WHERE storage_id=?',
+        'SELECT COUNT(*) count,COALESCE(SUM(size+CASE WHEN source_key IS NOT NULL AND source_key<>object_key THEN source_size ELSE 0 END),0) size FROM images WHERE storage_id=?',
         row.id,
       ),
     })),
@@ -374,7 +416,11 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
       b.config !== undefined &&
       (ctx.db.one('SELECT id FROM images WHERE storage_id=? LIMIT 1', row.id) ||
         ctx.db.one('SELECT id FROM upload_operations WHERE storage_id=? LIMIT 1', row.id) ||
-        ctx.db.one('SELECT id FROM cleanup_objects WHERE storage_id=? LIMIT 1', row.id))
+        ctx.db.one('SELECT id FROM cleanup_objects WHERE storage_id=? LIMIT 1', row.id) ||
+        ctx.db.one(
+          "SELECT id FROM upload_sessions WHERE storage_id=? AND state NOT IN ('ready','expired','canceled') LIMIT 1",
+          row.id,
+        ))
     )
       fail(409, 'STORAGE_IN_USE', '存储连接已有图片或未完成操作，请新增存储');
     const config =
@@ -408,10 +454,17 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
       ctx.db.one('SELECT id FROM folders WHERE storage_id=? LIMIT 1', sid) ||
       ctx.db.one('SELECT id FROM storage_backends WHERE id=? AND is_default=1', sid) ||
       ctx.db.one('SELECT id FROM upload_operations WHERE storage_id=? LIMIT 1', sid) ||
-      ctx.db.one('SELECT id FROM cleanup_objects WHERE storage_id=? LIMIT 1', sid)
+      ctx.db.one('SELECT id FROM cleanup_objects WHERE storage_id=? LIMIT 1', sid) ||
+      ctx.db.one(
+        "SELECT id FROM upload_sessions WHERE storage_id=? AND state NOT IN ('ready','expired','canceled') LIMIT 1",
+        sid,
+      )
     )
       fail(409, 'STORAGE_IN_USE', '存储仍被引用或为默认存储');
-    ctx.db.run('DELETE FROM storage_backends WHERE id=?', sid);
+    ctx.db.tx(() => {
+      ctx.db.run('DELETE FROM upload_sessions WHERE storage_id=?', sid);
+      ctx.db.run('DELETE FROM storage_backends WHERE id=?', sid);
+    });
     ctx.storage.instances.delete(sid);
     return { ok: true };
   });
@@ -450,7 +503,7 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
   });
   app.get('/api/v1/admin/overview', async () => ({
     images: ctx.db.one(
-      "SELECT COUNT(*) total,COALESCE(SUM(size),0) bytes,SUM(effective_visibility='public') publicCount,SUM(effective_visibility='private') privateCount FROM images WHERE deleted_at IS NULL",
+      "SELECT COUNT(*) total,COALESCE(SUM(size+CASE WHEN source_key IS NOT NULL AND source_key<>object_key THEN source_size ELSE 0 END),0) bytes,SUM(effective_visibility='public' AND publication_hold=0) publicCount,SUM(effective_visibility='private') privateCount FROM images WHERE deleted_at IS NULL",
     ),
     folders: ctx.db.one('SELECT COUNT(*) n FROM folders')!.n,
     services: ctx.db.one('SELECT COUNT(*) n,COALESCE(SUM(calls),0) calls FROM random_endpoints'),
@@ -462,10 +515,39 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
       .map((x) => ctx.imageInfo(x)),
   }));
   app.post('/api/v1/admin/jobs/:id/retry', async (req) => {
-    ctx.db.run(
-      "UPDATE jobs SET state='pending',attempts=0,next_run=0,error=NULL WHERE id=? AND state='failed'",
-      params(req).id,
-    );
+    const job = ctx.db.one("SELECT * FROM jobs WHERE id=? AND state='failed'", params(req).id);
+    if (!job) fail(404, 'NOT_FOUND', '失败任务不存在');
+    const payload = JSON.parse(job.payload);
+    ctx.db.tx(() => {
+      ctx.db.run(
+        "UPDATE jobs SET state='pending',attempts=0,next_run=0,error=NULL WHERE id=?",
+        job.id,
+      );
+      if (job.kind === 'process')
+        ctx.db.run(
+          "UPDATE images SET processing_status='pending' WHERE id=? AND content_version=?",
+          job.image_id,
+          payload.version,
+        );
+      if (job.kind === 'classify')
+        ctx.db.run(
+          "UPDATE images SET classification_status='pending' WHERE id=? AND organization_version=?",
+          job.image_id,
+          payload.organizationVersion,
+        );
+      if (job.kind === 'thumbnail')
+        ctx.db.run("UPDATE images SET thumbnail_state='pending' WHERE id=?", job.image_id);
+      if (payload.sessionId)
+        ctx.db.run(
+          'UPDATE upload_sessions SET state=?,error=NULL WHERE id=?',
+          job.kind === 'process'
+            ? 'processing'
+            : job.kind === 'classify'
+              ? 'classifying'
+              : 'validating',
+          payload.sessionId,
+        );
+    });
     return { ok: true };
   });
 }

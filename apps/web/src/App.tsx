@@ -22,6 +22,7 @@ import {
   LogOut,
   Menu,
   ArrowUpRight,
+  Sparkles,
 } from 'lucide-react';
 import { api, json, setCsrf, useData, useAction } from './api';
 import { Button, Field, Busy } from './components/ui';
@@ -29,6 +30,7 @@ import { Home, Gallery, Docs } from './Public';
 import { Overview, Resources, Trash } from './Resources';
 import { Services } from './Services';
 import { SettingsPage } from './Settings';
+import { Organization } from './Organization';
 export function Brand() {
   const site = useData('public/settings');
   const title = site.data?.title ?? 'XHImg';
@@ -129,6 +131,7 @@ function AdminShell() {
             ['/admin', LayoutDashboard, '概览'],
             ['/admin/services', Shuffle, '随机图服务'],
             ['/admin/folders', FolderOpen, '资源文件夹'],
+            ['/admin/organize', Sparkles, '智能整理'],
             ['/admin/trash', Trash2, '回收站'],
             ['/admin/settings', Settings, '设置中心'],
           ].map(([path, Icon, label]: any) => (
@@ -277,6 +280,7 @@ export default function App() {
         <Route index element={<Overview />} />
         <Route path="services" element={<Services />} />
         <Route path="folders" element={<Resources />} />
+        <Route path="organize" element={<Organization />} />
         <Route path="trash" element={<Trash />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>

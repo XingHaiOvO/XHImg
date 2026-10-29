@@ -1,8 +1,8 @@
-# XHImg P0 架构与实现
+# XHImg 架构与实现
 
 ## 范围与参考项目
 
-独立的单管理员系统，无匿名上传、公开注册或多租户。P0 完成授权上传、文件夹、本地/S3、直链、缩略图、API Key、随机图服务、公共图库及后台；AI、续传、可配置转换和存储迁移后置。
+独立的单管理员系统，无匿名上传、公开注册或多租户。P0 完成授权上传、文件夹、本地/S3、直链、缩略图、API Key、随机图服务、公共图库及后台；P1 增加处理、续传和 AI。存储迁移后置。
 
 EasyImg 的 Nuxt/NeDB/本地文件架构适合轻量个人使用，其图像处理与上传流程具有参考价值，但不直接继承其数据库、私有上传模型或目录扫描随机接口。PixelPunk 的文件夹、服务层与存储适配器展示了完整平台的模块边界，但 Go/GORM 与本项目 TypeScript/SQLite 路线不同，且其根许可证为非商业授权；不复制源代码或素材。两者仅作功能与结构参考，具体声明见 THIRD_PARTY_NOTICES.md。
 
@@ -48,7 +48,7 @@ erDiagram
     StorageBackend ||--o{ CleanupObject : retries
 ```
 
-`sessions` 对应单一管理员，会话只存 token 摘要。`settings` 保存站点配置和未安装时的令牌摘要。随机服务的 calls/successes/failures/last_called 保存基本统计，不为 P0 引入逐请求分析表。数据库只建立实际使用的实体，不包含 AI/分片空表。
+`sessions` 对应单一管理员，会话只存 token 摘要。`settings` 保存站点配置、加密AI配置和未安装时的令牌摘要。随机服务的 calls/successes/failures/last_called 保存基本统计，不引入逐请求分析表。P1 的 upload_sessions 持久化续传与管线状态，jobs.payload 保存处理策略、版本及归属快照。
 
 ## 权限与数据流
 
@@ -80,7 +80,15 @@ flowchart LR
 
 上传对象写入与数据库提交用持久化操作记录衔接，异常退出恢复 abandoned 操作并回收孤立对象。缩略图失败不丢失原图，任务恢复 running 状态，最多五次自动重试。彻底删除先标记 purging，删除实际对象后才删记录。连接配置仍被图片或未完成操作引用时禁止更换。
 
-上传每次一个文件，最多两个并发，20MB/4000万像素；缩略图单任务生成，最长边640px，不放大。原图不重编码，P0 仅 JPG/PNG/WebP，拒绝动画。
+上传每次一个文件，最多两个并发，默认100MB/4000万像素；处理与缩略图共享 CPU 串行门，缩略图最长边640px，不放大。处理默认关闭，仅 JPG/PNG/WebP，拒绝动画。
+
+## P1 管线与状态
+
+`pipeline.ts` 为 multipart 与续传统一执行校验、存储和数据库提交。`policies.ts` 逐字段解析策略并串行图片解码；`processing.ts` 将原图或保留源转换为新对象，提交前复核内容版本及授权。独立 source 引用与当前 object 引用去重统计；旧版本在成功事务后清理。content_version 控制处理，organization_version 控制归档；access_version 控制链接和缓存失效。
+
+`resumable.ts` 在 @tus/file-store 外增加分片 SHA-256 暂存验证层，以 SQLite configstore 和确认偏移恢复，完成后只排入 finalize 任务，204 不意味着发布完成。校验后仍通过统一 pipeline。浏览器 Worker 增量哈希，IndexedDB 只保存恢复元数据。
+
+`organization.ts` 使用加密设置、实时候选范围及小预览调用兼容视觉接口。模型只能返回候选 ID 或 null；提交时再次校验当前授权、候选资格、图片删除及版本状态。新图 publication_hold 在所有非管理员访问、列表和随机候选统一过滤；未匹配回私有未分类。既有图片重分类不暂停当前访问。AI 单并发队列与 CPU 队列分开，等待网络不阻塞删除。
 
 ## 页面与接口
 

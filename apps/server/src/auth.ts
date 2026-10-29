@@ -96,7 +96,9 @@ export function registerAuth(app: FastifyInstance, ctx: Context) {
     const body = z
       .object({
         name,
-        permissions: z.array(z.enum(['read', 'upload', 'private:read', 'random'])).min(1),
+        permissions: z
+          .array(z.enum(['read', 'upload', 'private:read', 'random', 'ai:classify']))
+          .min(1),
         grants: z.array(grant).min(1).max(100),
         expires: z.number().int().positive().nullable().default(null),
         rateLimit: z.number().int().min(0).max(10000).default(120),

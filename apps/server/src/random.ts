@@ -39,7 +39,7 @@ export function candidateIds(ctx: Context, endpoint: Row, actor: Actor) {
     ctx.candidates.set(cacheKey, cached);
     return cached.ids;
   }
-  const where = ["state='ready'", 'deleted_at IS NULL'],
+  const where = ["state='ready'", 'deleted_at IS NULL', 'publication_hold=0'],
     args: any[] = [];
   const folderSet = (ids: string[], exclude = false) => {
     where.push(`folder_id ${exclude ? 'NOT IN' : 'IN'} (SELECT value FROM json_each(?))`);

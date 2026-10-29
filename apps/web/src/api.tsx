@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
 let csrf = '';
+export const csrfToken = () => csrf;
 export function setCsrf(value: string) {
   csrf = value;
 }

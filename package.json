@@ -11,6 +11,7 @@
     "typecheck": "pnpm -r typecheck",
     "test:e2e": "playwright test",
     "test:scale": "pnpm --filter @xhimg/server test:scale",
+    "test:resources": "pnpm --filter @xhimg/server test:resources",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

@@ -4,11 +4,16 @@ import { createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { join } from 'node:path';
 import { Context } from './context.js';
-import { id } from './security.js';
+import { id, HttpError } from './security.js';
+import { processImageJob } from './processing.js';
+import { classificationJob, aiConfig, AIError } from './organization.js';
+import { imageWork } from './policies.js';
+import { finalizeUpload, expireResumable } from './resumable.js';
 
 export class Worker {
   busy = false;
   stopped = false;
+  aiBusy = false;
   timer?: NodeJS.Timeout;
   constructor(public ctx: Context) {}
   start() {
@@ -20,7 +25,9 @@ export class Worker {
     void this.tick().catch(() => {});
   }
   async tick() {
-    if (this.busy || this.stopped) return;
+    if (this.stopped) return;
+    const ai = this.aiTick();
+    if (this.busy) return ai;
     this.busy = true;
     const { db, storage } = this.ctx;
     try {
@@ -43,18 +50,26 @@ export class Worker {
         await rm(op.temp_path, { force: true });
       }
       const job = db.one(
-        "SELECT * FROM jobs WHERE state='pending' AND next_run<=? ORDER BY created_at LIMIT 1",
+        "SELECT * FROM jobs WHERE kind<>'classify' AND state='pending' AND next_run<=? AND (image_id IS NULL OR kind='purge' OR EXISTS(SELECT 1 FROM images WHERE id=jobs.image_id AND deleted_at IS NULL)) ORDER BY created_at LIMIT 1",
         Date.now(),
       );
       if (job) {
         db.run("UPDATE jobs SET state='running' WHERE id=?", job.id);
         try {
-          const image = db.one('SELECT * FROM images WHERE id=?', job.image_id);
+          if (job.kind === 'finalize')
+            await finalizeUpload(this.ctx, JSON.parse(job.payload).sessionId);
+          const image = job.image_id
+            ? db.one('SELECT * FROM images WHERE id=?', job.image_id)
+            : undefined;
           if (image) {
             const adapter = storage.byId(image.storage_id);
-            if (job.kind === 'purge') {
-              await adapter.delete(image.object_key);
-              await adapter.delete(image.thumb_key);
+            if (job.kind === 'process') {
+              await processImageJob(this.ctx, job);
+            } else if (job.kind === 'purge') {
+              for (const key of new Set(
+                [image.object_key, image.thumb_key, image.source_key].filter(Boolean),
+              ))
+                await adapter.delete(key);
               db.tx(() => {
                 db.run('UPDATE folders SET cover_id=NULL WHERE cover_id=?', image.id);
                 db.run('DELETE FROM images WHERE id=?', image.id);
@@ -67,11 +82,13 @@ export class Worker {
               try {
                 const object = await adapter.get(image.object_key);
                 await pipeline(object.stream, createWriteStream(tmp));
-                await sharp(tmp, { limitInputPixels: 40_000_000 })
-                  .rotate()
-                  .resize({ width: 640, height: 640, fit: 'inside', withoutEnlargement: true })
-                  .webp({ quality: 80 })
-                  .toFile(out);
+                await imageWork(() =>
+                  sharp(tmp, { limitInputPixels: 40_000_000 })
+                    .rotate()
+                    .resize({ width: 640, height: 640, fit: 'inside', withoutEnlargement: true })
+                    .webp({ quality: 80 })
+                    .toFile(out),
+                );
                 await adapter.put(image.thumb_key, out, 'image/webp');
                 db.run("UPDATE images SET thumbnail_state='ready' WHERE id=?", image.id);
               } finally {
@@ -82,9 +99,23 @@ export class Worker {
               }
             }
           }
-          db.run('DELETE FROM jobs WHERE id=?', job.id);
-        } catch {
-          const attempts = job.attempts + 1;
+          const latest = job.image_id
+            ? db.one('SELECT * FROM images WHERE id=?', job.image_id)
+            : undefined;
+          if (
+            job.kind === 'process' &&
+            latest?.deleted_at &&
+            ['pending', 'processing'].includes(latest.processing_status)
+          )
+            db.run(
+              "UPDATE jobs SET state='pending',next_run=? WHERE id=?",
+              Date.now() + 1500,
+              job.id,
+            );
+          else db.run('DELETE FROM jobs WHERE id=?', job.id);
+        } catch (error) {
+          const attempts =
+            error instanceof HttpError && error.statusCode < 500 ? 5 : job.attempts + 1;
           db.run(
             'UPDATE jobs SET state=?,attempts=?,next_run=?,error=? WHERE id=?',
             attempts >= 5 ? 'failed' : 'pending',
@@ -95,6 +126,24 @@ export class Worker {
           );
           if (job.kind === 'thumbnail')
             db.run("UPDATE images SET thumbnail_state='failed' WHERE id=?", job.image_id);
+          if (job.kind === 'process') {
+            const payload = JSON.parse(job.payload);
+            db.run(
+              "UPDATE images SET processing_status='failed' WHERE id=? AND content_version=?",
+              job.image_id,
+              payload.version,
+            );
+            if (payload.sessionId)
+              db.run(
+                "UPDATE upload_sessions SET state='failed',error='图片处理失败，可重试或使用原图' WHERE id=?",
+                payload.sessionId,
+              );
+          }
+          if (job.kind === 'finalize')
+            db.run(
+              "UPDATE upload_sessions SET state='failed',error='文件校验或存储失败，请检查后重试' WHERE id=?",
+              JSON.parse(job.payload).sessionId,
+            );
         }
       }
       for (const obj of db.all(
@@ -114,6 +163,7 @@ export class Worker {
         }
       }
       db.run('DELETE FROM sessions WHERE expires<?', Date.now());
+      await expireResumable(this.ctx);
       const tmpDir = join(this.ctx.config.dir, 'tmp');
       await mkdir(tmpDir, { recursive: true });
       for (const name of await readdir(tmpDir)) {
@@ -123,10 +173,68 @@ export class Worker {
     } finally {
       this.busy = false;
     }
+    await ai;
+  }
+  async aiTick() {
+    if (this.aiBusy || this.stopped) return;
+    const { db } = this.ctx;
+    const job = db.one(
+      "SELECT * FROM jobs WHERE kind='classify' AND state='pending' AND next_run<=? AND EXISTS(SELECT 1 FROM images WHERE id=jobs.image_id AND deleted_at IS NULL) ORDER BY created_at LIMIT 1",
+      Date.now(),
+    );
+    if (!job) return;
+    this.aiBusy = true;
+    db.run("UPDATE jobs SET state='running' WHERE id=?", job.id);
+    try {
+      await classificationJob(this.ctx, job);
+      const latest = db.one('SELECT * FROM images WHERE id=?', job.image_id);
+      if (latest?.deleted_at && ['pending', 'running'].includes(latest.classification_status))
+        db.run("UPDATE jobs SET state='pending',next_run=? WHERE id=?", Date.now() + 1500, job.id);
+      else db.run('DELETE FROM jobs WHERE id=?', job.id);
+    } catch (error) {
+      const attempts = job.attempts + 1;
+      const retry =
+        error instanceof AIError && error.retryable && attempts <= aiConfig(this.ctx).retries;
+      const message =
+        error instanceof AIError ? error.safeMessage : '分类任务失败，请检查授权、模型或存储';
+      db.run(
+        'UPDATE jobs SET state=?,attempts=?,next_run=?,error=? WHERE id=?',
+        retry ? 'pending' : 'failed',
+        attempts,
+        Date.now() +
+          Math.max(error instanceof AIError ? error.retryAfter : 0, 5000 * 2 ** attempts),
+        message,
+        job.id,
+      );
+      const payload = JSON.parse(job.payload);
+      db.run(
+        'UPDATE images SET classification_status=? WHERE id=? AND organization_version=?',
+        retry ? 'pending' : 'failed',
+        job.image_id,
+        payload.organizationVersion,
+      );
+      const current = db.one(
+        'SELECT organization_version,content_version FROM images WHERE id=?',
+        job.image_id,
+      );
+      if (
+        payload.sessionId &&
+        current?.organization_version === payload.organizationVersion &&
+        current?.content_version === payload.contentVersion
+      )
+        db.run(
+          'UPDATE upload_sessions SET state=?,error=? WHERE id=?',
+          retry ? 'classifying' : 'failed',
+          message,
+          payload.sessionId,
+        );
+    } finally {
+      this.aiBusy = false;
+    }
   }
   async stop() {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
-    while (this.busy) await new Promise((r) => setTimeout(r, 25));
+    while (this.busy || this.aiBusy) await new Promise((r) => setTimeout(r, 25));
   }
 }

@@ -214,3 +214,298 @@ test('scoped multi-resource key form, site settings and dark theme work in the b
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await page.screenshot({ path: 'test-results/settings-dark.png', fullPage: true });
 });
+
+test('processing settings, interrupted transfer, refresh/reselect resume and AI organization work together', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('/login');
+  await page.getByLabel('管理员用户名').fill('owner');
+  await page.getByLabel('密码', { exact: true }).fill('browser-test-password-123');
+  await page.getByRole('button', { name: '登录工作台' }).click();
+  await page.getByRole('link', { name: '设置中心', exact: true }).click();
+  await page.getByRole('button', { name: '图片处理', exact: true }).click();
+  await page.getByLabel('启用图片处理', { exact: true }).check();
+  await page.getByLabel('输出格式').selectOption('webp');
+  await page.getByLabel('最大宽度（像素）').fill('640');
+  await page.getByRole('button', { name: '保存处理策略' }).click();
+  await expect(page.getByRole('status')).toContainText('已保存');
+  await page.getByRole('button', { name: 'AI 模型', exact: true }).click();
+  await page
+    .getByLabel('API Base URL')
+    .fill((await readFile('.cache/e2e-model.txt', 'utf8')).trim());
+  await page.getByLabel('模型名称').fill('fixture');
+  await page.getByLabel('启用 AI 自动分类').check();
+  await page.getByLabel('旅行（私有）', { exact: true }).check();
+  await page.getByRole('button', { name: '保存并测试模型' }).click();
+  await expect(page.getByRole('status')).toContainText('视觉输入和分类输出测试通过');
+  await page.getByRole('link', { name: '智能整理', exact: true }).click();
+  await page.getByRole('button', { name: '手动任务', exact: true }).click();
+  await page.getByLabel('来源文件夹').selectOption({ label: '旅行' });
+  await page.getByLabel('搜索已有图片').fill('does-not-exist');
+  await expect(page.getByText('没有符合条件的图片。')).toBeVisible();
+  await page.getByLabel('搜索已有图片').fill('e2e-image');
+  await expect(page.getByText('尚未分类', { exact: true })).toBeVisible();
+  await page.getByLabel('选择 e2e-image.png').check();
+  await page.screenshot({ path: 'test-results/manual-classification-desktop.png', fullPage: true });
+  await page.getByRole('button', { name: '执行整理', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('已安排 1 张图片整理');
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get('/api/v1/admin/images?search=e2e-image');
+        return (await response.json()).items[0]?.classificationStatus;
+      },
+      { timeout: 15000 },
+    )
+    .toBe('completed');
+  await page.getByRole('button', { name: '已完成', exact: true }).click();
+  await expect(page.getByText('e2e-image.png', { exact: true })).toBeVisible({ timeout: 15000 });
+  await page.getByRole('button', { name: '手动任务', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByLabel('来源文件夹').selectOption({ label: '旅行' });
+  await expect(page.getByText('e2e-image.png', { exact: true })).toBeVisible();
+  await expect(page.locator('.sidebar')).toHaveCSS('transform', 'matrix(1, 0, 0, 1, -235, 0)');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: 'test-results/manual-classification-mobile.png', fullPage: true });
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.getByRole('button', { name: '上传中心', exact: true }).click();
+  let held = false;
+  let confirmedOffset = 0,
+    resumeHeld = false;
+  let release: () => void = () => {};
+  let releaseResume: () => void = () => {};
+  await page.evaluate(() => {
+    const send = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function (body) {
+      (window as any).__lastUploadXHR = this;
+      return send.call(this, body);
+    };
+  });
+  await page.route('**/api/v1/resumable/*', async (route) => {
+    if (
+      route.request().method() === 'PATCH' &&
+      route.request().headers()['upload-offset'] !== '0' &&
+      !held
+    ) {
+      held = true;
+      confirmedOffset = Number(route.request().headers()['upload-offset']);
+      await new Promise<void>((r) => (release = r));
+      try {
+        await route.abort();
+      } catch {}
+      return;
+    }
+    if (route.request().method() === 'PATCH' && held && !resumeHeld) {
+      resumeHeld = true;
+      await new Promise<void>((r) => (releaseResume = r));
+      await route.abort().catch(() => {});
+      return;
+    }
+    await route.continue();
+  });
+  await page.getByLabel('选择上传图片').setInputFiles(resolve('.cache/e2e-large.png'));
+  await expect.poll(() => held).toBe(true);
+  await page.evaluate(() =>
+    (window as any).__lastUploadXHR.upload.dispatchEvent(
+      new ProgressEvent('progress', {
+        lengthComputable: true,
+        loaded: 2 * 1024 * 1024,
+        total: 4 * 1024 * 1024,
+      }),
+    ),
+  );
+  const fileLength = (await readFile('.cache/e2e-large.png')).length;
+  await expect(page.getByRole('progressbar')).toHaveAttribute(
+    'value',
+    String(Math.round(((confirmedOffset + 2 * 1024 * 1024) / fileLength) * 100)),
+  );
+  const pausedProgress = await page.getByRole('progressbar').getAttribute('value');
+  expect(Number(pausedProgress)).toBeGreaterThan(Math.round((confirmedOffset / fileLength) * 100));
+  await page.getByRole('button', { name: '暂停', exact: true }).click();
+  await expect(page.getByText('已暂停', { exact: true })).toBeVisible();
+  release();
+  await page.getByRole('button', { name: '继续', exact: true }).click();
+  await expect.poll(() => resumeHeld).toBe(true);
+  await expect(page.getByRole('progressbar')).toHaveAttribute('value', pausedProgress!);
+  await page.getByRole('button', { name: '暂停', exact: true }).click();
+  releaseResume();
+  await page.reload();
+  await page.unroute('**/api/v1/resumable/*');
+  await expect(page.getByRole('heading', { name: '可恢复的上传' })).toBeVisible();
+  const picker = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: '恢复', exact: true }).click();
+  const resumed = page.waitForRequest(
+    (r) =>
+      r.method() === 'PATCH' &&
+      r.url().includes('/api/v1/resumable/') &&
+      Number(r.headers()['upload-offset']) > 0,
+  );
+  let workerBlocked = false,
+    releaseWorker: () => void = () => {};
+  const workerGate = new Promise<void>((r) => (releaseWorker = r));
+  await page.route('**/hash.worker-*.js', async (route) => {
+    workerBlocked = true;
+    await workerGate;
+    await route.continue();
+  });
+  await (await picker).setFiles(resolve('.cache/e2e-large.png'));
+  await expect.poll(() => workerBlocked).toBe(true);
+  const confirmedProgress = Math.round((confirmedOffset / fileLength) * 100);
+  await expect(page.getByRole('progressbar')).toHaveAttribute('value', String(confirmedProgress));
+  releaseWorker();
+  expect((await resumed).headers()['upload-offset']).toBe(String(confirmedOffset));
+  await expect(page.getByText('上传成功', { exact: true })).toBeVisible({ timeout: 30000 });
+  await page.getByRole('button', { name: '已完成', exact: true }).click();
+  await expect(page.getByText('e2e-large.webp', { exact: true })).toBeVisible();
+  await expect(
+    page
+      .getByRole('row')
+      .filter({ has: page.getByText('e2e-large.webp', { exact: true }) })
+      .getByRole('cell', { name: '已归档', exact: true }),
+  ).toBeVisible();
+  const session = await (await page.request.get('/api/v1/auth/me')).json();
+  const images = await (await page.request.get('/api/v1/admin/images?search=e2e-large')).json();
+  expect(images.total).toBe(1);
+  expect(images.items[0].format).toBe('webp');
+  expect(images.items[0].name).toBe('e2e-large.webp');
+  expect(images.items[0].width).toBe(640);
+  expect(images.items[0].hasOriginal).toBe(true);
+  await page.getByLabel('选择 e2e-large.webp').check();
+  await page.getByLabel('人工归档目标').selectOption('uncategorized');
+  await page.getByRole('button', { name: '人工归档', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('已人工归档');
+  await page.screenshot({ path: 'test-results/p1-organization-desktop.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.sidebar')).toHaveCSS('transform', 'matrix(1, 0, 0, 1, -235, 0)');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: 'test-results/p1-organization-mobile.png', fullPage: true });
+  await page.request.put('/api/v1/admin/ai', {
+    headers: { 'X-CSRF-Token': session.csrf },
+    data: { enabled: false },
+  });
+  await page.request.put('/api/v1/admin/processing', {
+    headers: { 'X-CSRF-Token': session.csrf },
+    data: { policy: { enabled: false }, maxUploadMB: 100 },
+  });
+  expect(errors).toEqual([]);
+});
+
+test('cancel freezes hashing and transfer progress and ignores late upload status responses', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const state = { count: 0, terminated: [] as number[], mode: 'gated', late: () => {} };
+    (window as any).__uploadHash = state;
+    (window as any).Worker = class {
+      onmessage: any;
+      onerror: any;
+      index = ++state.count;
+      postMessage() {
+        const receive = this.onmessage;
+        if (state.mode === 'complete' || this.index === 2) {
+          queueMicrotask(() => receive({ data: { hash: '0'.repeat(64) } }));
+          return;
+        }
+        queueMicrotask(() => receive({ data: { progress: 0.2 } }));
+        state.late = () => {
+          receive({ data: { progress: 0.9 } });
+          receive({ data: { hash: '0'.repeat(64) } });
+        };
+      }
+      terminate() {
+        state.terminated.push(this.index);
+      }
+    };
+  });
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  const requests: string[] = [];
+  page.on('request', (r) => {
+    if (r.url().includes('/api/v1/resumable')) requests.push(r.method());
+  });
+  await page.goto('/login');
+  await page.getByLabel('管理员用户名').fill('owner');
+  await page.getByLabel('密码', { exact: true }).fill('browser-test-password-123');
+  await page.getByRole('button', { name: '登录工作台' }).click();
+  await page.getByRole('link', { name: '智能整理', exact: true }).click();
+  await page.getByLabel('选择上传图片').setInputFiles(resolve('.cache/e2e-large.png'));
+  const first = page
+    .locator('.upload-queue > div')
+    .filter({ has: page.getByText('e2e-large.png', { exact: true }) });
+  await expect(first.getByText('校验文件指纹（20%）', { exact: true })).toBeVisible();
+  await expect(first.getByRole('progressbar')).toHaveAttribute('value', '0');
+  await first.getByRole('button', { name: '取消', exact: true }).click();
+  await page.evaluate(() => (window as any).__uploadHash.late());
+  await expect(first.getByText('已取消', { exact: true })).toBeVisible();
+  await expect(first.getByRole('progressbar')).toHaveAttribute('value', '0');
+  expect(await page.evaluate(() => (window as any).__uploadHash.terminated)).toContain(1);
+  expect(requests).toEqual([]);
+
+  const created = page.waitForResponse(
+    (r) => r.request().method() === 'POST' && r.url().endsWith('/api/v1/resumable'),
+  );
+  await page.getByLabel('选择上传图片').setInputFiles(resolve('.cache/e2e-image.png'));
+  const uploadUrl = (await created).headers().location!;
+  await expect.poll(() => page.evaluate(() => (window as any).__uploadHash.count)).toBe(3);
+  const second = page
+    .locator('.upload-queue > div')
+    .filter({ has: page.getByText('e2e-image.png', { exact: true }) });
+  const frozen = await second.getByRole('progressbar').getAttribute('value');
+  const canceled = page.waitForResponse(
+    (r) => r.request().method() === 'DELETE' && r.url().includes('/api/v1/uploads/'),
+  );
+  await second.getByRole('button', { name: '取消', exact: true }).click();
+  expect((await canceled).ok()).toBe(true);
+  await page.evaluate(() => (window as any).__uploadHash.late());
+  await expect(second.getByText('已取消', { exact: true })).toBeVisible();
+  await expect(second.getByRole('progressbar')).toHaveAttribute('value', frozen!);
+  expect(requests.filter((method) => method === 'PATCH')).toHaveLength(0);
+  expect(await page.evaluate(() => (window as any).__uploadHash.terminated)).toContain(3);
+  expect(
+    (await (await page.request.get(`/api/v1/uploads/${uploadUrl.split('/').pop()}`)).json()).state,
+  ).toBe('canceled');
+
+  await page.reload();
+  await page.clock.install();
+  await page.evaluate(() => ((window as any).__uploadHash.mode = 'complete'));
+  const mockId = 'upl_' + 'a'.repeat(24);
+  let length = 0,
+    queries = 0,
+    release: () => void = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  await page.route('**/api/v1/resumable', async (route) => {
+    length = Number(route.request().headers()['upload-length']);
+    await route.fulfill({
+      status: 201,
+      headers: { 'Tus-Resumable': '1.0.0', Location: `/api/v1/resumable/${mockId}` },
+    });
+  });
+  await page.route('**/api/v1/resumable/*', (route) =>
+    route.fulfill({
+      status: 204,
+      headers: { 'Tus-Resumable': '1.0.0', 'Upload-Offset': String(length) },
+    }),
+  );
+  await page.route(`**/api/v1/uploads/${mockId}`, async (route) => {
+    if (route.request().method() === 'DELETE') {
+      await route.fulfill({ json: { ok: true } });
+      return;
+    }
+    queries++;
+    await held;
+    await route
+      .fulfill({ json: { uploadId: mockId, state: 'processing', offset: length, length } })
+      .catch(() => {});
+  });
+  await page.getByLabel('选择上传图片').setInputFiles(resolve('.cache/e2e-image.png'));
+  await expect.poll(() => queries).toBe(1);
+  await page.getByRole('button', { name: '取消', exact: true }).click();
+  release();
+  await page.clock.runFor(2500);
+  await expect(page.getByText('已取消', { exact: true })).toBeVisible();
+  expect(queries).toBe(1);
+  await expect(page.getByRole('progressbar')).toHaveAttribute('value', '100');
+  expect(errors).toEqual([]);
+});

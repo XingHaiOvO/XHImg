@@ -1,10 +1,14 @@
 import { resolve } from 'node:path';
-import { Store } from './db.js';
+import Database from 'better-sqlite3';
 const target = process.argv[2];
 if (!target) throw new Error('Usage: pnpm backup <absolute-destination.sqlite>');
-const db = new Store(resolve(import.meta.dirname, '../../..', process.env.DATA_DIR ?? 'data'));
+// Backing up an older installation must not apply the new application's migrations.
+const db = new Database(
+  resolve(import.meta.dirname, '../../..', process.env.DATA_DIR ?? 'data', 'xhimg.sqlite'),
+  { readonly: true, fileMustExist: true },
+);
 try {
-  await db.sql.backup(resolve(target));
+  await db.backup(resolve(target));
   console.log('SQLite backup completed:', resolve(target));
 } finally {
   db.close();

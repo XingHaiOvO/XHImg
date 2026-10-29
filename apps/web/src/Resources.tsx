@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import {
   FolderPlus,
@@ -12,9 +12,12 @@ import {
   RefreshCw,
   ArrowUpRight,
 } from 'lucide-react';
-import { api, json, useData, useAction, useNotice, bytes, copy, absolute, upload } from './api';
+import { api, json, useData, useAction, useNotice, bytes, copy, absolute } from './api';
 import { Button, Field, Modal, Busy } from './components/ui';
 import { Thumbnail, Preview } from './Public';
+import { UploadCenter } from './components/UploadCenter';
+import { ProcessingEditor, processingDefaults } from './components/ProcessingEditor';
+import { Check } from './components/ui';
 export function PageHeading({
   title,
   description,
@@ -53,7 +56,7 @@ export function Overview() {
       <div className="metrics">
         {[
           ['图片总数', data.images.total ?? 0, '张图片'],
-          ['存储占用', bytes(data.images.bytes), '原图空间'],
+          ['存储占用', bytes(data.images.bytes), '当前结果与保留原图，不含缩略图'],
           ['公开图片', data.images.publicCount ?? 0, `私有 ${data.images.privateCount ?? 0} 张`],
           ['API 调用', data.services.calls, `${data.services.n} 个服务`],
         ].map(([title, value, detail]) => (
@@ -114,7 +117,15 @@ export function Overview() {
                 {data.jobs.map((job: any) => (
                   <tr key={job.id}>
                     <td>{job.image_id}</td>
-                    <td>{job.kind === 'purge' ? '彻底删除' : '生成缩略图'}</td>
+                    <td>
+                      {{
+                        purge: '彻底删除',
+                        thumbnail: '生成缩略图',
+                        process: '图片处理',
+                        classify: 'AI 分类',
+                        finalize: '上传校验',
+                      }[job.kind as string] ?? job.kind}
+                    </td>
                     <td>
                       {job.state === 'failed'
                         ? '失败'
@@ -528,6 +539,8 @@ function FolderPanel({ folder, folders, storages, tab, reload, leave }: any) {
       storageId: folder.storage_id,
       sortOrder: folder.sort_order,
       coverId: folder.cover_id,
+      processingPolicy: folder.processing_policy ? JSON.parse(folder.processing_policy) : null,
+      aiEnabled: !!folder.ai_enabled,
     });
   }, [folder]);
   const save = () =>
@@ -633,6 +646,28 @@ function FolderPanel({ folder, folders, storages, tab, reload, leave }: any) {
                 required
               />
             </Field>
+            <Check
+              label="参与 AI 自动分类"
+              disabled={!!folder.system}
+              checked={!!draft.aiEnabled}
+              onChange={(e) => setDraft({ ...draft, aiEnabled: e.target.checked })}
+            />
+            <Check
+              label="继承系统图片处理策略"
+              checked={draft.processingPolicy == null}
+              onChange={(e) =>
+                setDraft({
+                  ...draft,
+                  processingPolicy: e.target.checked ? null : { ...processingDefaults },
+                })
+              }
+            />
+            {draft.processingPolicy != null && (
+              <ProcessingEditor
+                value={draft.processingPolicy}
+                onChange={(value) => setDraft({ ...draft, processingPolicy: value })}
+              />
+            )}
             <Field label="描述">
               <textarea
                 value={draft.description ?? ''}
@@ -708,6 +743,7 @@ function FolderPanel({ folder, folders, storages, tab, reload, leave }: any) {
   );
 }
 function ImageEditor({ image, close, folders, reload }: any) {
+  const [processing, setProcessing] = useState<any>({ ...processingDefaults, enabled: true });
   const [draft, setDraft] = useState<any>({}),
     action = useAction();
   useEffect(() => {
@@ -784,6 +820,46 @@ function ImageEditor({ image, close, folders, reload }: any) {
               onChange={(e) => setDraft({ ...draft, description: e.target.value })}
             />
           </Field>
+          <p className="muted">
+            处理：{image.processingStatus} · 分类：{image.classificationStatus}
+          </p>
+          <div className="button-row">
+            <Button type="button" variant="secondary" asChild>
+              <a href={`/api/v1/admin/images/${image.id}/original`}>下载原始文件</a>
+            </Button>
+            {image.publicationHold && (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() =>
+                  void action.run(async () => {
+                    await api(`admin/images/${image.id}/use-original`, json('POST'));
+                    await reload();
+                    close();
+                  }, '已使用原文件，按当前权限发布')
+                }
+              >
+                {image.state === 'processing' ? '使用原图并结束处理' : '使用当前版本并结束整理'}
+              </Button>
+            )}
+          </div>
+          <details>
+            <summary>重新处理图片</summary>
+            <ProcessingEditor value={processing} onChange={setProcessing} />
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={action.pending || !processing.enabled}
+              onClick={() =>
+                void action.run(async () => {
+                  await api(`admin/images/${image.id}/reprocess`, json('POST', { processing }));
+                  await reload();
+                }, '已提交处理任务，当前可用版本保持可访问')
+              }
+            >
+              提交处理任务
+            </Button>
+          </details>
           <p className="muted">图片 ID：{image.id}</p>
           {image.state === 'missing' && (
             <Button
@@ -806,103 +882,16 @@ function ImageEditor({ image, close, folders, reload }: any) {
   );
 }
 function UploadModal({ open, close, folders, current, reload }: any) {
-  const [folder, setFolder] = useState(current || 'uncategorized'),
-    [vis, setVis] = useState('private'),
-    [queue, setQueue] = useState<{ name: string; progress: number; status: string }[]>([]),
-    [busy, setBusy] = useState(false),
-    input = useRef<HTMLInputElement>(null),
-    notice = useNotice();
-  useEffect(() => {
-    if (open && !busy) setFolder(current || 'uncategorized');
-  }, [open, current]);
-  const start = async (files: File[]) => {
-    if (busy) return;
-    setBusy(true);
-    setQueue(files.map((f) => ({ name: f.name, progress: 0, status: '等待上传' })));
-    const update = (i: number, patch: any) =>
-      setQueue((q) => q.map((r, j) => (j === i ? { ...r, ...patch } : r)));
-    let next = 0;
-    await Promise.all(
-      [0, 1].map(async () => {
-        while (next < files.length) {
-          const i = next++,
-            file = files[i]!;
-          try {
-            update(i, { status: '上传中' });
-            await upload(
-              file,
-              new URLSearchParams({ folderId: folder, visibility: vis }).toString(),
-              (n) => update(i, { progress: n }),
-            );
-            update(i, { progress: 100, status: '上传成功' });
-          } catch (e: any) {
-            update(i, { status: e.message });
-          }
-        }
-      }),
-    );
-    setBusy(false);
-    await reload();
-    notice('上传队列处理结束，请查看逐项结果');
-  };
   return (
     <Modal
       open={open}
-      onOpenChange={(v) => {
-        if (!v && !busy) close();
+      onOpenChange={(value) => {
+        if (!value) close();
       }}
       title="把图片，放到对的位置。"
-      description="JPG、PNG、WebP · 每张最多 20MB · 不接受动画图片"
+      description="支持分片续传，关闭窗口后可重新选择原文件恢复。"
     >
-      <Field label="目标文件夹">
-        <select disabled={busy} value={folder} onChange={(e) => setFolder(e.target.value)}>
-          <FolderOptions folders={folders} />
-        </select>
-      </Field>
-      <Field label="图片自身权限">
-        <select disabled={busy} value={vis} onChange={(e) => setVis(e.target.value)}>
-          <option value="private">私有</option>
-          <option value="public">公开（仍受父文件夹限制）</option>
-        </select>
-      </Field>
-      <input
-        ref={input}
-        className="sr-only"
-        type="file"
-        multiple
-        accept="image/jpeg,image/png,image/webp"
-        aria-label="选择上传图片"
-        onChange={(e) => {
-          void start(Array.from(e.target.files ?? []));
-          e.target.value = '';
-        }}
-      />
-      <button
-        type="button"
-        className="dropzone"
-        disabled={busy}
-        onClick={() => input.current?.click()}
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => {
-          e.preventDefault();
-          if (!busy) void start(Array.from(e.dataTransfer.files));
-        }}
-      >
-        <Upload size={28} />
-        <strong>{busy ? '正在上传，请保持窗口打开' : '拖入图片，或点击选择'}</strong>
-        <span>原图保留，缩略图将在后台生成</span>
-      </button>
-      {queue.length > 0 && (
-        <div className="upload-queue" aria-live="polite">
-          {queue.map((q, i) => (
-            <div key={i}>
-              <strong>{q.name}</strong>
-              <span>{q.status}</span>
-              <progress value={q.progress} max="100" aria-label={`${q.name} 上传进度`} />
-            </div>
-          ))}
-        </div>
-      )}
+      <UploadCenter folders={folders} current={current} onComplete={reload} />
     </Modal>
   );
 }
