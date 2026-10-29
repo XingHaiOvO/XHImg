@@ -17,8 +17,10 @@ import {
 } from './policies.js';
 import { enqueueClassification } from './organization.js';
 import { imageFilename } from './image-filename.js';
+import { assertNotMigrating } from './migrations.js';
 
 export function queueProcessing(ctx: Context, image: Row, actor: Actor, override?: unknown) {
+  assertNotMigrating(image);
   if (image.deleted_at || image.state === 'purging') fail(409, 'NOT_AVAILABLE', '图片已删除');
   if (
     image.processing_status !== 'failed' &&

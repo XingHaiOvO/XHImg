@@ -9,13 +9,18 @@ import { processImageJob } from './processing.js';
 import { classificationJob, aiConfig, AIError } from './organization.js';
 import { imageWork } from './policies.js';
 import { finalizeUpload, expireResumable } from './resumable.js';
+import { MigrationWorker, purgeMigrationCopies } from './migration-worker.js';
+import { objectProtected } from './migrations.js';
 
 export class Worker {
   busy = false;
   stopped = false;
   aiBusy = false;
   timer?: NodeJS.Timeout;
-  constructor(public ctx: Context) {}
+  migrations: MigrationWorker;
+  constructor(public ctx: Context) {
+    this.migrations = new MigrationWorker(ctx);
+  }
   start() {
     this.ctx.db.run("UPDATE jobs SET state='pending' WHERE state='running'");
     this.timer = setInterval(() => {
@@ -26,6 +31,7 @@ export class Worker {
   }
   async tick() {
     if (this.stopped) return;
+    if (this.ctx.config.workers !== false) void this.migrations.tick().catch(() => {});
     const ai = this.aiTick();
     if (this.busy) return ai;
     this.busy = true;
@@ -50,7 +56,7 @@ export class Worker {
         await rm(op.temp_path, { force: true });
       }
       const job = db.one(
-        "SELECT * FROM jobs WHERE kind<>'classify' AND state='pending' AND next_run<=? AND (image_id IS NULL OR kind='purge' OR EXISTS(SELECT 1 FROM images WHERE id=jobs.image_id AND deleted_at IS NULL)) ORDER BY created_at LIMIT 1",
+        "SELECT * FROM jobs WHERE kind<>'classify' AND state='pending' AND next_run<=? AND (image_id IS NULL OR EXISTS(SELECT 1 FROM images WHERE id=jobs.image_id AND migration_lock IS NULL AND (deleted_at IS NULL OR jobs.kind='purge'))) ORDER BY created_at LIMIT 1",
         Date.now(),
       );
       if (job) {
@@ -66,10 +72,7 @@ export class Worker {
             if (job.kind === 'process') {
               await processImageJob(this.ctx, job);
             } else if (job.kind === 'purge') {
-              for (const key of new Set(
-                [image.object_key, image.thumb_key, image.source_key].filter(Boolean),
-              ))
-                await adapter.delete(key);
+              await purgeMigrationCopies(this.ctx, image);
               db.tx(() => {
                 db.run('UPDATE folders SET cover_id=NULL WHERE cover_id=?', image.id);
                 db.run('DELETE FROM images WHERE id=?', image.id);
@@ -151,6 +154,7 @@ export class Worker {
         Date.now(),
       )) {
         try {
+          if (objectProtected(this.ctx, obj.storage_id, obj.object_key)) continue;
           await storage.byId(obj.storage_id).delete(obj.object_key);
           db.run('DELETE FROM cleanup_objects WHERE id=?', obj.id);
         } catch {
@@ -235,6 +239,7 @@ export class Worker {
   async stop() {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
+    await this.migrations.stop();
     while (this.busy || this.aiBusy) await new Promise((r) => setTimeout(r, 25));
   }
 }

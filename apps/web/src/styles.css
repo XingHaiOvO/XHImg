@@ -2184,6 +2184,100 @@ summary {
   object-fit: cover;
   border-radius: 6px;
 }
+.migration-task-list {
+  display: grid;
+  gap: 12px;
+}
+.migration-task {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--text);
+  cursor: pointer;
+}
+.migration-task.active {
+  border-color: var(--blue);
+}
+.migration-task > span:first-of-type {
+  flex: 1;
+  min-width: 0;
+}
+.migration-task small {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.migration-task strong {
+  overflow-wrap: anywhere;
+}
+.migration-details {
+  margin-top: 24px;
+}
+.migration-details > p,
+.migration-preview p {
+  margin: 12px 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.migration-details > progress {
+  width: 100%;
+  height: 6px;
+  display: block;
+  margin: 16px 0;
+  accent-color: var(--blue);
+}
+.migration-source-note {
+  margin: 22px 0;
+  padding-block: 18px;
+  border-block: 1px solid var(--line);
+}
+.migration-source-note p {
+  margin: 10px 0;
+  font-size: 13px;
+}
+.migration-controls {
+  margin-top: 18px;
+}
+@media (max-width: 640px) {
+  .migration-task {
+    flex-wrap: wrap;
+    padding: 18px;
+  }
+  .migration-task > span:last-child {
+    width: 100%;
+    padding-left: 34px;
+  }
+  .migration-items,
+  .migration-items tbody,
+  .migration-items tr {
+    display: block;
+  }
+  .migration-items thead {
+    display: none;
+  }
+  .migration-items tr {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .migration-items td {
+    display: flex;
+    gap: 12px;
+    border: 0;
+    padding: 7px 0;
+    overflow-wrap: anywhere;
+  }
+  .migration-items td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    flex: 0 0 48px;
+  }
+  .migration-items td > span {
+    min-width: 0;
+  }
+}
 @media (max-width: 640px) {
   .organization-table thead {
     display: none;

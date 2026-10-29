@@ -254,7 +254,14 @@ export async function classificationJob(ctx: Context, job: Row) {
     await mkdir(work, { recursive: true });
     const input = join(work, 'input');
     try {
-      const file = await ctx.storage.byId(image.storage_id).get(image.object_key);
+      const location = ctx.image(image.id);
+      if (
+        location.deleted_at ||
+        location.content_version !== payload.contentVersion ||
+        location.organization_version !== payload.organizationVersion
+      )
+        return;
+      const file = await ctx.storage.byId(location.storage_id).get(location.object_key);
       await pipeline(file.stream, createWriteStream(input));
       const jpeg = await imageWork(() =>
         sharp(input, { limitInputPixels: 40_000_000 })

@@ -11,6 +11,7 @@
     "test": "tsx --test --test-concurrency=1 test/*.test.ts",
     "test:scale": "tsx test/scale.ts",
     "test:resources": "tsx test/resources.ts",
+    "test:migration-scale": "tsx test/migration-scale.ts",
     "backup": "tsx --env-file-if-exists=../../.env src/backup.ts"
   },
   "dependencies": {

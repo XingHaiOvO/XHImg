@@ -4,6 +4,7 @@ import { Context, params, query, paging, name, visibility } from './context.js';
 import { fail, id } from './security.js';
 import { s3ConfigSchema } from './storage.js';
 import { policyPatch } from './policies.js';
+import { migrationStorageUsed, assertNotMigrating } from './migrations.js';
 
 const folderBody = z.object({
   name,
@@ -305,6 +306,7 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
       }
       ctx.access.refresh();
     });
+    if (b.action === 'delete') for (const imageId of b.ids) ctx.migrationControl?.image(imageId);
     ctx.invalidate();
     return { ok: true };
   });
@@ -315,6 +317,7 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
       Date.now(),
       image.id,
     );
+    ctx.migrationControl?.image(image.id);
     ctx.invalidate();
     return { ok: true };
   });
@@ -342,6 +345,7 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
           Date.now(),
         );
     });
+    ctx.migrationControl?.image(image.id);
     ctx.invalidate();
     return { ok: true, queued: true };
   });
@@ -363,6 +367,10 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
       ...ctx.storage.safe(row),
       ...ctx.db.one(
         'SELECT COUNT(*) count,COALESCE(SUM(size+CASE WHEN source_key IS NOT NULL AND source_key<>object_key THEN source_size ELSE 0 END),0) size FROM images WHERE storage_id=?',
+        row.id,
+      ),
+      ...ctx.db.one(
+        "SELECT COUNT(*) retainedMigrationObjects,COALESCE(SUM(size),0) retainedMigrationBytes FROM (SELECT source_key,MAX(size) size FROM migration_objects WHERE source_id=? AND source_state IN ('retained','cleaning','failed') GROUP BY source_key)",
         row.id,
       ),
     })),
@@ -414,7 +422,8 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
       fail(400, 'DEFAULT_REQUIRED', '请先将其他存储设为默认');
     if (
       b.config !== undefined &&
-      (ctx.db.one('SELECT id FROM images WHERE storage_id=? LIMIT 1', row.id) ||
+      (migrationStorageUsed(ctx, row.id) ||
+        ctx.db.one('SELECT id FROM images WHERE storage_id=? LIMIT 1', row.id) ||
         ctx.db.one('SELECT id FROM upload_operations WHERE storage_id=? LIMIT 1', row.id) ||
         ctx.db.one('SELECT id FROM cleanup_objects WHERE storage_id=? LIMIT 1', row.id) ||
         ctx.db.one(
@@ -450,6 +459,7 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
   app.delete('/api/v1/admin/storage-backends/:id', async (req) => {
     const sid = params(req).id!;
     if (
+      migrationStorageUsed(ctx, sid) ||
       ctx.db.one('SELECT id FROM images WHERE storage_id=? LIMIT 1', sid) ||
       ctx.db.one('SELECT id FROM folders WHERE storage_id=? LIMIT 1', sid) ||
       ctx.db.one('SELECT id FROM storage_backends WHERE id=? AND is_default=1', sid) ||
@@ -517,6 +527,8 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
   app.post('/api/v1/admin/jobs/:id/retry', async (req) => {
     const job = ctx.db.one("SELECT * FROM jobs WHERE id=? AND state='failed'", params(req).id);
     if (!job) fail(404, 'NOT_FOUND', '失败任务不存在');
+    if (job.image_id && ['process', 'thumbnail'].includes(job.kind))
+      assertNotMigrating(ctx.image(job.image_id));
     const payload = JSON.parse(job.payload);
     ctx.db.tx(() => {
       ctx.db.run(

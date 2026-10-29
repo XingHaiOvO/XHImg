@@ -33,6 +33,7 @@ export class Context {
   secrets: Secrets;
   limiter = new Limiter();
   activeUploads = 0;
+  migrationControl?: { task(taskId: string): void; image(imageId: string): void };
   countedRequests = new WeakSet<FastifyRequest>();
   candidates = new Map<string, { revision: number; ids: string[]; bytes: number }>();
   constructor(
@@ -142,6 +143,7 @@ export class Context {
       processingStatus: row.processing_status,
       classificationStatus: row.classification_status,
       hasOriginal: !!row.source_key,
+      migrating: !!row.migration_lock,
       publicationHold: !!row.publication_hold,
       url: `/i/${row.id}`,
       thumbnailUrl: `/t/${row.id}`,

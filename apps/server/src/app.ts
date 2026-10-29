@@ -19,6 +19,9 @@ import { Worker } from './jobs.js';
 import { documentedApi } from './openapi.js';
 import { registerP1 } from './p1-routes.js';
 import { registerResumable } from './resumable.js';
+import { registerMigrations } from './migrations.js';
+import { recoverMigrations } from './migration-worker.js';
+import { cleanupLocalDirectories } from './local-directories.js';
 
 export async function createApp(config: Config) {
   const db = new Store(config.dir),
@@ -191,6 +194,7 @@ export async function createApp(config: Config) {
   registerUploads(app, ctx);
   registerRandom(app, ctx);
   registerP1(app, ctx);
+  registerMigrations(app, ctx);
   await registerResumable(app, ctx);
   app.get('/health', async () => {
     db.one('SELECT 1');
@@ -213,6 +217,10 @@ export async function createApp(config: Config) {
   });
   db.run("UPDATE upload_operations SET state='abandoned' WHERE state='writing'");
   db.run("UPDATE jobs SET state='pending' WHERE state='running'");
+  recoverMigrations(ctx);
+  const emptyDirectories = await cleanupLocalDirectories(config.dir);
+  if (emptyDirectories)
+    app.log.info({ emptyDirectories }, 'Removed empty local object directories');
   const worker = new Worker(ctx);
   if (config.workers !== false) worker.start();
   app.addHook('onClose', async () => {

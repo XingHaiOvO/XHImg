@@ -509,3 +509,77 @@ test('cancel freezes hashing and transfer progress and ignores late upload statu
   await expect(page.getByRole('progressbar')).toHaveAttribute('value', '100');
   expect(errors).toEqual([]);
 });
+
+test('storage migration previews selected and filtered images, preserves access and cleans source copies only on confirmation', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('/login');
+  await page.getByLabel('管理员用户名').fill('owner');
+  await page.getByLabel('密码', { exact: true }).fill('browser-test-password-123');
+  await page.getByRole('button', { name: '登录工作台' }).click();
+  await page.getByRole('link', { name: '设置中心', exact: true }).click();
+  await page.getByRole('button', { name: '添加存储', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByLabel('名称', { exact: true }).fill('迁移目的地');
+  await dialog.getByLabel('存储类型').selectOption('local');
+  await dialog.getByRole('button', { name: '保存存储', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  const storages = (await (await page.request.get('/api/v1/admin/storage-backends')).json()).items,
+    target = storages.find((s: any) => s.name === '迁移目的地');
+  const before = (await (await page.request.get('/api/v1/admin/images?search=e2e-image')).json())
+    .items[0];
+  const bytes = await (await page.request.get(before.url)).body();
+  await page.getByRole('link', { name: '资源文件夹', exact: true }).click();
+  await page.getByRole('button', { name: /旅行/ }).click();
+  await page.getByLabel('选择 e2e-image.png').check();
+  await page.getByRole('button', { name: '迁移存储', exact: true }).click();
+  await dialog.getByLabel('目标存储').selectOption(target.id);
+  await dialog.getByRole('button', { name: '预览迁移清单', exact: true }).click();
+  await expect(dialog.locator('.migration-preview')).toContainText('清单已冻结：1 张');
+  await dialog.getByRole('button', { name: '确认执行迁移', exact: true }).click();
+  await expect(page).toHaveURL(/tab=migrations/);
+  const details = page.locator('.migration-details');
+  await expect(details.getByText('已完成', { exact: true })).toBeVisible({ timeout: 20000 });
+  await expect(details.getByText('源副本已保留', { exact: true })).toBeVisible();
+  const after = (await (await page.request.get('/api/v1/admin/images?search=e2e-image')).json())
+    .items[0];
+  expect(after.storageId).toBe(target.id);
+  expect(after.id).toBe(before.id);
+  expect(after.name).toBe(before.name);
+  expect(after.visibility).toBe(before.visibility);
+  expect(after.url.split('?')[0]).toBe(before.url.split('?')[0]);
+  expect(await (await page.request.get(before.url)).body()).toEqual(bytes);
+  expect(await (await page.request.get(after.url)).body()).toEqual(bytes);
+  const sourceBefore = (
+    await (await page.request.get('/api/v1/admin/storage-backends')).json()
+  ).items.find((s: any) => s.id === 'local');
+  expect(sourceBefore.retainedMigrationObjects).toBeGreaterThan(0);
+  expect(sourceBefore.is_default).toBe(1);
+  await details.getByRole('button', { name: '清理源副本', exact: true }).click();
+  await expect(dialog).toContainText('不能撤销');
+  await dialog.getByRole('button', { name: '确认清理源副本', exact: true }).click();
+  await expect(details.getByText('清理已完成', { exact: true })).toBeVisible({ timeout: 20000 });
+  expect(await (await page.request.get(after.url)).body()).toEqual(bytes);
+  await page.getByRole('button', { name: '创建迁移任务', exact: true }).click();
+  await dialog.getByLabel('来源存储').selectOption('local');
+  await dialog.getByLabel('目标存储').selectOption(target.id);
+  await dialog.getByLabel('来源文件夹').selectOption(before.folderId);
+  await expect(dialog.getByLabel('包含回收站图片（仍保留删除状态）')).not.toBeChecked();
+  await dialog.getByRole('button', { name: '预览迁移清单', exact: true }).click();
+  await expect(dialog.locator('.migration-preview')).toContainText('清单已冻结：0 张');
+  await expect(dialog.getByRole('button', { name: '确认执行迁移', exact: true })).toBeDisabled();
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.locator('.migration-task').filter({ hasText: '已完成' }).click();
+  await expect(
+    details.locator('.migration-items').getByText('e2e-image.png', { exact: true }),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.sidebar')).toHaveCSS('transform', 'matrix(1, 0, 0, 1, -235, 0)');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: 'test-results/storage-migration-mobile.png', fullPage: true });
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.screenshot({ path: 'test-results/storage-migration-desktop.png', fullPage: true });
+  expect(errors).toEqual([]);
+});

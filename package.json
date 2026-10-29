@@ -12,6 +12,7 @@
     "test:e2e": "playwright test",
     "test:scale": "pnpm --filter @xhimg/server test:scale",
     "test:resources": "pnpm --filter @xhimg/server test:resources",
+    "test:migration-scale": "pnpm --filter @xhimg/server test:migration-scale",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

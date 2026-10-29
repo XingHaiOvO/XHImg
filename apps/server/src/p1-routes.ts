@@ -15,6 +15,7 @@ import {
 } from './organization.js';
 import { fail, id } from './security.js';
 import { imageFilename } from './image-filename.js';
+import { assertNotMigrating } from './migrations.js';
 
 export function registerP1(app: FastifyInstance, ctx: Context) {
   app.get('/api/v1/admin/processing', async () => ({
@@ -63,6 +64,7 @@ export function registerP1(app: FastifyInstance, ctx: Context) {
   });
   app.post('/api/v1/admin/images/:id/use-original', async (req) => {
     const image = ctx.image(params(req).id!);
+    assertNotMigrating(image);
     if (image.deleted_at || image.state === 'purging') fail(404, 'NOT_FOUND', '图片已删除');
     if (image.state !== 'processing' && image.publication_hold !== 1)
       fail(409, 'ALREADY_AVAILABLE', '图片已可用');

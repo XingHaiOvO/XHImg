@@ -123,6 +123,54 @@ try {
     await mkdir(resolve('../../.cache'), { recursive: true });
     await writeFile(resolve('../../.cache/p1-resources.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report, null, 2));
+    const migrationBaseline = process.memoryUsage().rss;
+    peak = migrationBaseline;
+    const migrationStart = performance.now(),
+      migrationCpu = process.cpuUsage();
+    const post = async (path: string, payload: any) => {
+      const response = await fetch(base + '/api/v1/admin/' + path, {
+        method: 'POST',
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      assert(response.ok, JSON.stringify(data));
+      return data as any;
+    };
+    const destination = await post('storage-backends', {
+      name: 'Resource destination',
+      type: 'local',
+    });
+    const migration = await post('storage-migrations', {
+      imageIds: [image.id],
+      targetStorageId: destination.id,
+    });
+    await post(`storage-migrations/${migration.id}/start`, {});
+    await worker.migrations.tick();
+    assert.equal(
+      ctx.db.one('SELECT state FROM storage_migrations WHERE id=?', migration.id)!.state,
+      'completed',
+    );
+    assert.equal(ctx.image(image.id).storage_id, destination.id);
+    const migrationUsage = process.cpuUsage(migrationCpu);
+    const migrationReport = {
+      sourceOriginalBytes: target,
+      objects: ctx.db.one('SELECT COUNT(*) n FROM migration_objects')!.n,
+      elapsedSeconds: (performance.now() - migrationStart) / 1000,
+      cpuSeconds: (migrationUsage.user + migrationUsage.system) / 1e6,
+      baselineRssMiB: migrationBaseline / 1024 ** 2,
+      observedPeakRssMiB: peak / 1024 ** 2,
+      sourceCopiesRetained: true,
+      node: process.version,
+      platform: process.platform,
+      scope:
+        'local to local, preview plus copy/readback SHA-256 and commit of 100MiB original, current JPG and thumbnail; not a 2GB VPS benchmark',
+    };
+    await writeFile(
+      resolve('../../.cache/p2-resources.json'),
+      JSON.stringify(migrationReport, null, 2),
+    );
+    console.log(JSON.stringify(migrationReport, null, 2));
   } finally {
     clearInterval(sampler);
   }

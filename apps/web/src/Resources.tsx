@@ -1,5 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
+const MigrationCreateDialog = lazy(() =>
+  import('./StorageMigrations').then((module) => ({ default: module.MigrationCreateDialog })),
+);
 import {
   FolderPlus,
   FolderOpen,
@@ -195,6 +198,8 @@ export function Resources() {
     [preview, setPreview] = useState<any>(),
     [editor, setEditor] = useState<any>(),
     [moveTarget, setMoveTarget] = useState('');
+  const [migrationOpen, setMigrationOpen] = useState(false),
+    navigate = useNavigate();
   const action = useAction();
   useEffect(() => {
     const t = setTimeout(() => {
@@ -326,6 +331,13 @@ export function Resources() {
               {selected.length > 0 && (
                 <div className="selection-bar">
                   <span>已选 {selected.length} 项</span>
+                  <Button
+                    variant="secondary"
+                    disabled={action.pending || selected.length > 100}
+                    onClick={() => setMigrationOpen(true)}
+                  >
+                    迁移存储
+                  </Button>
                   <select
                     aria-label="批量移动目标"
                     value={moveTarget}
@@ -463,6 +475,18 @@ export function Resources() {
         reload={reload}
       />
       <Preview image={preview} close={() => setPreview(undefined)} />
+      {migrationOpen && (
+        <Suspense fallback={<Busy />}>
+          <MigrationCreateDialog
+            imageIds={selected}
+            close={() => setMigrationOpen(false)}
+            onStarted={(task) => {
+              setSelected([]);
+              navigate(`/admin/settings?tab=migrations&task=${task.id}`);
+            }}
+          />
+        </Suspense>
+      )}
       <ImageEditor
         image={editor}
         close={() => setEditor(undefined)}

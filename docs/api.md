@@ -127,3 +127,50 @@ curl -i -X PATCH 'http://localhost:9521/api/v1/resumable/upl_ID' \
 手动整理在智能整理的“手动任务”页签中选择来源文件夹与已有图片，支持名称/标签搜索、分页勾选和每批100张；来源不包含子文件夹。执行时发送 `skipUnavailable:true`，跳过提交时已删除、已彻底删除、正在处理/分类或不可用的图片，并返回实际排队和跳过数量。既有公开图片排队期间保持当前访问，归档后仍按自身和目标文件夹权限判定。
 
 适配依据：[tus FileStore 文档](https://raw.githubusercontent.com/tus/tus-node-server/main/packages/file-store/README.md)、[noble-hashes 增量接口](https://github.com/paulmillr/noble-hashes)、[Sharp 输出参数](https://sharp.pixelplumbing.com/api-output/)。
+
+## P2 存储迁移
+
+仅接受管理员会话，写请求必须携带 `X-CSRF-Token`，不新增 API Key 权限。分页默认40条、上限100条。创建201返回冻结清单草稿，30分钟有效；确认start后才复制，不自动处理随后上传的图片。
+
+| 接口                                           | 行为                                              |
+| ---------------------------------------------- | ------------------------------------------------- |
+| `POST /admin/storage-migrations`               | 创建预览草稿                                      |
+| `GET /admin/storage-migrations`                | 分页查询任务                                      |
+| `GET /admin/storage-migrations/{id}`           | 任务摘要与累计进度                                |
+| `GET /admin/storage-migrations/{id}/items`     | 分页明细；可按state筛选                           |
+| `POST /admin/storage-migrations/{id}/{action}` | start / pause / resume / cancel / retry / cleanup |
+
+勾选图片与按来源筛选二选一：
+
+```json
+{ "targetStorageId": "sto_DEST", "imageIds": ["img_A", "img_B"], "includeTrash": false }
+```
+
+```json
+{
+  "targetStorageId": "sto_DEST",
+  "sourceStorageId": "local",
+  "folderId": "fld_SOURCE",
+  "includeChildren": false,
+  "includeTrash": false
+}
+```
+
+imageIds每批最多100个，重复ID去重；筛选模式不受100张限制，使用数据库批量清单。文件夹筛选默认不含后代；回收站默认排除，包含时保留删除状态。目标须启用，来源可停用；已经在目标、正在处理、缩略图未就绪或被其他迁移占用的图片显示跳过原因。
+
+摘要字段：id、target_id、target_name、state、selection、expires_at、created_at、total_count、success_count、failed_count、skipped_count、canceled_count、estimated_bytes、skipReasons、cleanup_state、retained_count、retained_bytes、error。estimated_bytes为可迁移图片的当前结果加不同保留原图估算，不含缩略图；retained_bytes为源副本实际对象大小，包含缩略图。明细字段包含image_id、name、source_name、state、phase、estimated_bytes、attempts、error，不返回凭证。
+
+任务状态：draft、queued、running、pausing、paused、canceling、canceled、completed、completed_with_errors、failed、expired。明细状态：draft、pending、copying、paused、committed、failed、skipped、canceled；phase显示copying/verifying/switching等阶段。累计进度按已处理图片统计，不把临时字节算作成功。
+
+```sh
+curl -X POST 'http://localhost:9521/api/v1/admin/storage-migrations' \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF" -H 'Content-Type: application/json' \
+  -d '{"sourceStorageId":"local","targetStorageId":"sto_DEST"}'
+# 检查返回的冻结清单和跳过原因，再确认执行。
+curl -X POST 'http://localhost:9521/api/v1/admin/storage-migrations/mig_ID/start' \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF"
+```
+
+控制请求200仅确认状态或排队，不表示后台完成。pause/cancel先中断I/O，再进入paused/canceled；取消不回滚已完成项，retry只重试failed项。source副本默认保留，只有终态任务可以cleanup；cleanup_state为retained/cleaning/partial_failed/cleaned。清理会重新验证当前对象，目标不可用时保留源副本，活跃读取时延后删除；部分失败可再次cleanup。
+
+迁移只改变storageId、对象位置及内部storage_version；图片ID、URL、内容、名称、权限、内容/整理/访问版本不变，因此原有效签名继续可用。图片DTO的migrating标记正在持锁；同图重新处理返回409 IMAGE_MIGRATING。草稿过期、目标连接变化或状态冲突也返回409。逻辑移动、AI归档和权限修改不被迁移覆盖；彻底删除同时删除迁移副本。默认上传配置必须另行手动调整。

@@ -1,25 +1,38 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { Plus, HardDrive, Cloud, KeyRound, ShieldCheck, Copy } from 'lucide-react';
 import { api, json, useData, useAction, useNotice, bytes, copy } from './api';
 import { Button, Field, Check, Modal, Busy } from './components/ui';
 import { PageHeading } from './Resources';
 import { ProcessingSettings, AISettings } from './P1Settings';
+const StorageMigrations = lazy(() =>
+  import('./StorageMigrations').then((module) => ({ default: module.StorageMigrations })),
+);
 export function SettingsPage() {
   const [tab, setTab] = useState(
-    new URLSearchParams(location.search).get('tab') === 'ai' ? 'AI 模型' : '存储后端',
+    new URLSearchParams(location.search).get('tab') === 'ai'
+      ? 'AI 模型'
+      : new URLSearchParams(location.search).get('tab') === 'migrations'
+        ? '存储迁移'
+        : '存储后端',
   );
   return (
     <>
       <PageHeading title="设置中心" description="基础设施，安静地为你的图片服务。" />
       <div className="tabs settings-tabs">
-        {['存储后端', 'API Key', '图片处理', 'AI 模型', '站点设置', '管理员安全'].map((t) => (
-          <button key={t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>
-            {t}
-          </button>
-        ))}
+        {['存储后端', '存储迁移', 'API Key', '图片处理', 'AI 模型', '站点设置', '管理员安全'].map(
+          (t) => (
+            <button key={t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>
+              {t}
+            </button>
+          ),
+        )}
       </div>
       {tab === '存储后端' ? (
         <StorageSettings />
+      ) : tab === '存储迁移' ? (
+        <Suspense fallback={<Busy />}>
+          <StorageMigrations />
+        </Suspense>
       ) : tab === 'API Key' ? (
         <KeySettings />
       ) : tab === '站点设置' ? (
@@ -79,6 +92,12 @@ function StorageSettings() {
               <div className="storage-usage">
                 <strong>{bytes(s.size)}</strong>
                 <span>{s.count} 张图片</span>
+                {!!s.retainedMigrationObjects && (
+                  <small>
+                    另有迁移源副本 {s.retainedMigrationObjects} 个 /{' '}
+                    {bytes(s.retainedMigrationBytes)}（含缩略图）
+                  </small>
+                )}
               </div>
               <div className="button-row">
                 <Button variant="secondary" onClick={() => setEdit(s)}>

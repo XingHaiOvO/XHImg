@@ -146,6 +146,17 @@ const bodies: Record<string, any> = {
     },
     ['ids'],
   ),
+  'post /api/v1/admin/storage-migrations': object(
+    {
+      targetStorageId: string,
+      imageIds: { type: 'array', items: string, minItems: 1, maxItems: 100 },
+      sourceStorageId: string,
+      folderId: string,
+      includeChildren: { type: 'boolean', default: false },
+      includeTrash: { type: 'boolean', default: false },
+    },
+    ['targetStorageId'],
+  ),
   'patch /api/v1/admin/images/{id}': image,
   'post /api/v1/admin/images/batch': object(
     {
@@ -329,6 +340,48 @@ export function documentedApi(app: FastifyInstance) {
         op.security = [{ apiKey: [] }, { adminSession: [] }];
         op.description =
           '仅上传归属者或管理员，仍校验当前授权。状态 created/uploading/validating/processing/classifying/ready/failed/expired/canceled；GET 包含 uploadId、imageId、offset、length、expiresAt、error、image。retry 重试校验、处理或分类；DELETE 取消未完成任务。';
+      }
+      if (path.startsWith('/api/v1/admin/storage-migrations')) {
+        op.description =
+          '仅管理员。创建返回201草稿，30分钟有效，imageIds与sourceStorageId二选一；筛选范围在创建时冻结。确认start后异步迁移，不改变ID、内容、权限和默认上传存储。源副本保留至显式cleanup；字节校验通过后逐图切换。';
+        if (path.endsWith('/{action}')) {
+          for (const item of parameters)
+            if (item.in === 'path' && item.name === 'action')
+              item.schema = {
+                type: 'string',
+                enum: ['start', 'pause', 'resume', 'cancel', 'retry', 'cleanup'],
+              };
+          op.description +=
+            ' pause/cancel先中断I/O，再确认暂停/取消；retry只重试失败项。cleanup只用于终态任务，目标不可用时保留源副本。返回任务状态，不代表后台操作完成。';
+        }
+        if (method === 'get' && !path.endsWith('/{id}'))
+          parameters.push(
+            parameter('page', { type: 'integer', minimum: 1, default: 1 }),
+            parameter('limit', { type: 'integer', minimum: 1, maximum: 100, default: 40 }),
+          );
+        if (path.endsWith('/items'))
+          parameters.push(
+            parameter('state', {
+              type: 'string',
+              enum: [
+                'draft',
+                'pending',
+                'copying',
+                'paused',
+                'committed',
+                'failed',
+                'skipped',
+                'canceled',
+              ],
+            }),
+          );
+        if (method === 'post' && path === '/api/v1/admin/storage-migrations')
+          op.responses = {
+            '201': {
+              description:
+                '冻结清单草稿，包含id、state、total_count、success_count、failed_count、skipped_count、canceled_count、estimated_bytes、expires_at、skipReasons；容量估算不含缩略图。',
+            },
+          };
       }
       if (method !== 'get' && method !== 'head' && path.startsWith('/api/v1/admin'))
         parameters.push({ name: 'X-CSRF-Token', in: 'header', required: true, schema: string });
