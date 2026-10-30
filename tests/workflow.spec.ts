@@ -73,6 +73,16 @@ test('install, login, folder upload, public gallery, random service, private tra
     });
     expect(created.status()).toBe(201);
   }
+  const publicImages = await (await page.request.get('/api/v1/public/images?limit=1')).json();
+  const siteSettings = await (await page.request.get('/api/v1/admin/settings')).json();
+  const backgroundSettings = await page.request.put('/api/v1/admin/settings', {
+    headers: { 'X-CSRF-Token': adminSession.csrf },
+    data: {
+      ...siteSettings,
+      homeBackgroundUrl: `http://127.0.0.1:9522/i/${publicImages.items[0].id}`,
+    },
+  });
+  expect(backgroundSettings.status()).toBe(200);
   const visitor = await page.context().browser()!.newContext();
   await visitor.grantPermissions(['clipboard-read', 'clipboard-write']);
   const publicPage = await visitor.newPage();
@@ -1054,4 +1064,95 @@ test('S3 images load directly with valid signatures, copy both addresses and rec
   await thumbnail.click();
   await expect.poll(() => logicalCalls).toBe(2);
   expect(directCalls).toBe(1);
+});
+
+test('cross-origin access is open by default and the administrator explicitly enables the retained whitelist', async ({
+  page,
+  browser,
+}) => {
+  await loginInteractions(page);
+  const config = JSON.parse(await readFile('.cache/e2e-s3.json', 'utf8'));
+  const visitor = await browser.newContext();
+  const external = await visitor.newPage();
+  await external.goto(config.endpoint + '/cors-client');
+  const crossFetch = () =>
+    external.evaluate(async () => {
+      try {
+        return await (
+          await fetch('http://127.0.0.1:9522/api/v1/public/settings', { credentials: 'omit' })
+        ).json();
+      } catch {
+        return 'blocked';
+      }
+    });
+  try {
+    expect((await crossFetch()).title).toBe('XHImg 测试');
+    await page.goto('/admin/settings?tab=site');
+    const toggle = page.getByLabel('启用跨域来源白名单', { exact: true });
+    const origins = page.getByLabel('允许跨域的来源', { exact: true });
+    const save = page.getByRole('button', { name: '保存站点设置', exact: true });
+    await expect(toggle).not.toBeChecked();
+    await expect(origins).toBeDisabled();
+    await toggle.check();
+    await origins.fill('https://allowed.example');
+    let saved = page.waitForResponse(
+      (r) => r.url().endsWith('/api/v1/admin/settings') && r.request().method() === 'PUT',
+    );
+    await save.click();
+    expect((await saved).status()).toBe(200);
+    expect(await crossFetch()).toBe('blocked');
+    await origins.fill(config.endpoint);
+    saved = page.waitForResponse(
+      (r) => r.url().endsWith('/api/v1/admin/settings') && r.request().method() === 'PUT',
+    );
+    await save.click();
+    expect((await saved).status()).toBe(200);
+    expect((await crossFetch()).title).toBe('XHImg 测试');
+    await page.reload();
+    await expect(toggle).toBeChecked();
+    await expect(origins).toHaveValue(config.endpoint);
+    await toggle.uncheck();
+    await expect(origins).toBeDisabled();
+    saved = page.waitForResponse(
+      (r) => r.url().endsWith('/api/v1/admin/settings') && r.request().method() === 'PUT',
+    );
+    await save.click();
+    expect((await saved).status()).toBe(200);
+    await page.reload();
+    await expect(toggle).not.toBeChecked();
+    await expect(origins).toHaveValue(config.endpoint);
+    expect((await crossFetch()).title).toBe('XHImg 测试');
+    expect(
+      await external.evaluate(
+        async () =>
+          (
+            await fetch('http://127.0.0.1:9522/api/v1/admin/folders', {
+              method: 'POST',
+              credentials: 'omit',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: 'unauthorized' }),
+            })
+          ).status,
+      ),
+    ).toBe(401);
+    expect(
+      await external.evaluate(
+        async () =>
+          (
+            await fetch('http://127.0.0.1:9522/api/v1/resumable', {
+              method: 'POST',
+              credentials: 'omit',
+              headers: { 'Tus-Resumable': '1.0.0', 'Upload-Length': '1' },
+            })
+          ).status,
+      ),
+    ).toBe(401);
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({ path: 'test-results/cors-settings-mobile.png', fullPage: true });
+  } finally {
+    await visitor.close();
+  }
 });

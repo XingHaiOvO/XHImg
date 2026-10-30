@@ -640,6 +640,8 @@ function SiteSettings() {
               json('PUT', {
                 title: draft.title,
                 description: draft.description,
+                homeBackgroundUrl: (draft.homeBackgroundUrl ?? '').trim(),
+                originWhitelistEnabled: !!draft.originWhitelistEnabled,
                 allowedOrigins: draft.origins
                   .split('\n')
                   .map((x: string) => x.trim())
@@ -647,6 +649,10 @@ function SiteSettings() {
               }),
             );
             window.dispatchEvent(new Event('site-settings'));
+            if ((draft.homeBackgroundUrl ?? '').trim() !== settings.data.homeBackgroundUrl) {
+              // Refresh the document policy before navigating to a newly configured image host.
+              window.location.reload();
+            }
           });
         }}
       >
@@ -663,11 +669,31 @@ function SiteSettings() {
             onChange={(e) => setDraft({ ...draft, description: e.target.value })}
           />
         </Field>
+        <Field label="首页背景图片" hint="填写 HTTP(S) 图片地址，留空使用默认底色。">
+          <input
+            type="url"
+            maxLength={2048}
+            placeholder="https://example.com/background.jpg"
+            value={draft.homeBackgroundUrl ?? ''}
+            onChange={(e) => setDraft({ ...draft, homeBackgroundUrl: e.target.value })}
+          />
+        </Field>
+        <Check
+          label="启用跨域来源白名单"
+          checked={!!draft.originWhitelistEnabled}
+          onChange={(e) => setDraft({ ...draft, originWhitelistEnabled: e.target.checked })}
+        />
+        <p className="muted">
+          {draft.originWhitelistEnabled
+            ? '仅允许本站、PUBLIC_URL 和下方白名单来源。列表为空时仅允许本站与 PUBLIC_URL。'
+            : '默认允许任意 HTTP(S) 来源跨域访问。接口仍需相应授权，跨域管理员 Cookie 不开放。'}
+        </p>
         <Field
           label="允许跨域的来源"
-          hint="每行一个完整来源，例如 https://example.com，不含路径和末尾斜杠。不会允许跨域管理员 Cookie。"
+          hint="每行一个完整来源，例如 https://example.com，不含路径和末尾斜杠。仅在开启白名单后生效，关闭时保留已填写内容。"
         >
           <textarea
+            disabled={!draft.originWhitelistEnabled}
             value={draft.origins ?? ''}
             onChange={(e) => setDraft({ ...draft, origins: e.target.value })}
           />

@@ -355,6 +355,61 @@ async function fixture() {
   };
 }
 
+test('homepage background settings persist, validate URLs and allow only the selected image origin', async () => {
+  const f = await fixture();
+  try {
+    const initial = (await f.request('GET', '/api/v1/admin/settings')).json();
+    assert.equal(initial.homeBackgroundUrl, '');
+    const homeBackgroundUrl = 'https://images.example.com/banner.jpg';
+    const saved = await f.request('PUT', '/api/v1/admin/settings', {
+      ...initial,
+      homeBackgroundUrl,
+    });
+    assert.equal(saved.statusCode, 200, saved.body);
+    assert.equal(
+      (await f.request('GET', '/api/v1/admin/settings')).json().homeBackgroundUrl,
+      homeBackgroundUrl,
+    );
+    const publicSettings = await f.request('GET', '/api/v1/public/settings', undefined, {});
+    assert.equal(publicSettings.json().homeBackgroundUrl, homeBackgroundUrl);
+    assert.equal(publicSettings.json().allowedOrigins, undefined);
+    assert.match(
+      String(publicSettings.headers['content-security-policy']),
+      /img-src[^;]*https:\/\/images\.example\.com/,
+    );
+    const { homeBackgroundUrl: omitted, ...legacy } = initial;
+    assert.equal((await f.request('PUT', '/api/v1/admin/settings', legacy)).statusCode, 200);
+    assert.equal(f.ctx.siteSettings().homeBackgroundUrl, homeBackgroundUrl);
+    for (const invalid of [
+      'javascript:alert(1)',
+      'data:image/png;base64,abc',
+      'ftp://images.example.com/a.jpg',
+      '/relative.jpg',
+    ]) {
+      assert.equal(
+        (
+          await f.request('PUT', '/api/v1/admin/settings', {
+            ...initial,
+            homeBackgroundUrl: invalid,
+          })
+        ).statusCode,
+        400,
+      );
+    }
+    assert.equal(
+      (await f.request('PUT', '/api/v1/admin/settings', { ...initial, homeBackgroundUrl }, {}))
+        .statusCode,
+      401,
+    );
+    assert.equal((await f.request('PUT', '/api/v1/admin/settings', initial)).statusCode, 200);
+    const cleared = await f.request('GET', '/api/v1/public/settings', undefined, {});
+    assert.equal(cleared.json().homeBackgroundUrl, '');
+    assert.doesNotMatch(String(cleared.headers['content-security-policy']), /images\.example\.com/);
+  } finally {
+    await f.close();
+  }
+});
+
 test('first install is one-use; admin-only API, CSRF, origin, sessions and key hashes', async () => {
   const f = await fixture();
   try {
@@ -380,6 +435,7 @@ test('first install is one-use; admin-only API, CSRF, origin, sessions and key h
       ).statusCode,
       403,
     );
+    f.ctx.db.set('site', { ...f.ctx.siteSettings(), originWhitelistEnabled: true });
     assert.equal(
       (
         await f.request(

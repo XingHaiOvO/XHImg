@@ -9,6 +9,13 @@ export const name = z.string().trim().min(1).max(120);
 export const resourceId = z.string().max(100);
 export const params = (r: FastifyRequest) => r.params as Record<string, string>;
 export const query = (r: FastifyRequest) => r.query as Record<string, string>;
+const siteDefaults = {
+  title: 'XHImg',
+  description: '一次整理，随处调用。',
+  homeBackgroundUrl: '',
+  allowedOrigins: [] as string[],
+  originWhitelistEnabled: false,
+};
 export const paging = (r: FastifyRequest) => {
   const q = z
     .object({
@@ -51,6 +58,8 @@ export class Context {
     try {
       const source = new URL(origin);
       if (!['http:', 'https:'].includes(source.protocol) || source.origin !== origin) return false;
+      const site = this.siteSettings();
+      if (!site.originWhitelistEnabled) return true;
       // Fastify only uses forwarded host/protocol when trustProxy is enabled.
       // A same-origin UI request is valid even when PUBLIC_URL names a different
       // local port or host alias (for example Vite vs the built-in web server).
@@ -58,13 +67,14 @@ export class Context {
       return (
         origin === requestOrigin ||
         origin === new URL(this.config.publicUrl).origin ||
-        this.db
-          .setting<{ allowedOrigins: string[] }>('site', { allowedOrigins: [] })
-          .allowedOrigins.includes(origin)
+        site.allowedOrigins.includes(origin)
       );
     } catch {
       return false;
     }
+  }
+  siteSettings() {
+    return { ...siteDefaults, ...this.db.setting<Partial<typeof siteDefaults>>('site', {}) };
   }
   invalidate() {
     this.access.revision++;

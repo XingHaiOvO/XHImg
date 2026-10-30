@@ -489,38 +489,43 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
     ctx.storage.instances.delete(sid);
     return { ok: true };
   });
-  app.get('/api/v1/admin/settings', async () =>
-    ctx.db.setting('site', {
-      title: 'XHImg',
-      description: '一次整理，随处调用。',
-      allowedOrigins: [],
-    }),
-  );
+  app.get('/api/v1/admin/settings', async () => ctx.siteSettings());
   app.put('/api/v1/admin/settings', async (req) => {
     const body = z
       .object({
         title: name,
         description: z.string().max(500),
+        homeBackgroundUrl: z
+          .union([z.literal(''), z.url({ protocol: /^https?$/ })])
+          .pipe(z.string().max(2048))
+          .optional(),
+        originWhitelistEnabled: z.boolean().optional(),
         allowedOrigins: z
           .array(
             z.url().refine((x) => {
-              const u = new URL(x);
-              return ['http:', 'https:'].includes(u.protocol) && u.origin === x;
+              try {
+                const u = new URL(x);
+                return ['http:', 'https:'].includes(u.protocol) && u.origin === x;
+              } catch {
+                return false;
+              }
             }),
           )
           .max(20),
       })
       .parse(req.body);
-    ctx.db.set('site', body);
-    return body;
+    const settings = {
+      ...body,
+      homeBackgroundUrl: body.homeBackgroundUrl ?? ctx.siteSettings().homeBackgroundUrl,
+      originWhitelistEnabled:
+        body.originWhitelistEnabled ?? ctx.siteSettings().originWhitelistEnabled,
+    };
+    ctx.db.set('site', settings);
+    return settings;
   });
   app.get('/api/v1/public/settings', async () => {
-    const { allowedOrigins, ...safe } = ctx.db.setting('site', {
-      title: 'XHImg',
-      description: '一次整理，随处调用。',
-      allowedOrigins: [],
-    });
-    return safe;
+    const { title, description, homeBackgroundUrl } = ctx.siteSettings();
+    return { title, description, homeBackgroundUrl };
   });
   app.get('/api/v1/admin/overview', async (req) => ({
     images: ctx.db.one(

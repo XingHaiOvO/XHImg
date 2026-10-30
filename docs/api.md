@@ -23,6 +23,10 @@ console.log(image.logicalUrl); // 站内地址，适合保存引用；私有地�
 
 ## 授权
 
+跨域默认允许任意规范的HTTP(S)来源，响应回显允许的Origin且不开放跨域Cookie凭证；普通API和tus使用同一策略。管理员通过 `PUT /admin/settings` 的 `originWhitelistEnabled` 手动开启白名单，开启后仅允许实际同源、PUBLIC_URL及 `allowedOrigins` 中的来源。`null`、file来源、含路径/尾斜杠的非规范Origin不接受。无Origin的服务端请求保持原有行为。
+
+新增开关缺失的旧配置按false处理，已有白名单保留但不自动启用。旧客户端PUT不传开关时保留当前开关，避免保存名称等字段时意外关闭已启用的白名单。公共设置接口不返回开关或名单。跨域策略不授予接口权限，也不修改S3桶自身CORS。
+
 管理员：登录建立 HttpOnly、SameSite=Strict 会话；`GET /auth/me` 返回 CSRF token，所有管理写请求包含 `X-CSRF-Token`。`/admin/*` 不接受 API Key 替代管理员。
 
 外部应用：`Authorization: Bearer xh_...`。权限为 `upload`、`read`、`private:read`、`random`、`ai:classify`；范围为 `all`、`folder`、`service`、`storage`。范围可授多条。文件夹授权默认只包含当前文件夹，`descendants:true` 才包含后代。图片上传权限不包含私有读取。存储范围只用于显式选择存储，不自动授予图片操作权限。AI 还要求当前及候选目标文件夹的上传范围，旧密钥不自动增加权限。
@@ -46,7 +50,7 @@ curl -X POST 'http://localhost:9521/api/v1/upload?folderId=fld_ID&visibility=pub
 
 - `GET /folders/{id}/images`：有效公开文件夹可匿名访问，私有文件夹须授权。内部图片仍逐项过滤。支持分页、search、tag、sort（newest/oldest/name）。
 - `GET /public/images`：仅公开图片，支持相同筛选，另有 folderId；不返回存储位置。
-- `GET /public/folders`、`GET /public/services`、`GET /public/settings`：公开导航、服务卡片及站点名称描述。
+- `GET /public/folders`、`GET /public/services`、`GET /public/settings`：公开导航、服务卡片及站点名称、描述和首页背景图片地址。
 - `GET /i/{id}`、`GET /t/{id}`：当前版本与缩略图。同样验证会话、Key 或 sig 查询参数。公开响应要求重新验证；私有响应 no-store。源文件只允许管理员从专用下载接口获取。
 
 ## 随机图
@@ -79,10 +83,12 @@ curl -X POST 'http://localhost:9521/api/v1/upload?folderId=fld_ID&visibility=pub
 | `/admin/api-keys/{id}`              | DELETE 撤销                                                                                 |
 | `/admin/random-services`            | GET 配置/统计、POST 创建                                                                    |
 | `/admin/random-services/{id}`       | PUT 完整更新、DELETE 删除非全站服务                                                         |
-| `/admin/settings`                   | GET/PUT title、description、allowedOrigins                                                  |
+| `/admin/settings`                   | GET/PUT title、description、allowedOrigins、originWhitelistEnabled（默认false；PUT省略时保留当前值）                                                  |
 | `/admin/password`                   | PUT `{currentPassword,password}` 并注销全部会话                                             |
 | `/admin/overview`                   | GET 基本统计、近期图片与后台任务                                                            |
 | `/admin/jobs/{id}/retry`            | POST 重试失败任务                                                                           |
+
+`homeBackgroundUrl` 配置首页背景图片，支持 HTTP(S) 地址（最多 2048 字符）；空字符串使用默认底色，PUT 省略时保留当前值。首页不再自动选用图库图片。
 
 文件夹创建字段：name、parentId、description、visibility、storageId、sortOrder、coverId。PATCH 仅修改显式提交字段。
 
@@ -123,7 +129,7 @@ curl -i -X PATCH 'http://localhost:9521/api/v1/resumable/upl_ID' \
 
 创建返回201+Location，PATCH返回204+Upload-Offset。完整文件收齐后异步校验与处理；重复完成不会创建第二张图片。`GET /uploads/{uploadId}` 返回 uploadId、imageId、state、offset、length、expiresAt、error、image，仅归属者或管理员。`DELETE /uploads/{uploadId}` 取消未发布任务；`POST /uploads/{uploadId}/retry` 重试已收齐文件的失败校验、处理或分类。已发布图片使用回收站。
 
-浏览器采用 tus-js-client，自定义 HttpStack 在每片发送前增量计算摘要。Worker 计算整文件指纹，IndexedDB 保存恢复 URL、指纹、大小及选项；刷新需重新选择原文件。默认24小时过期、20个未完成传输、2GiB声明量，磁盘不足507。跨域调用须先配置来源白名单。
+浏览器采用 tus-js-client，自定义 HttpStack 在每片发送前增量计算摘要。Worker 计算整文件指纹，IndexedDB 保存恢复 URL、指纹、大小及选项；刷新需重新选择原文件。默认24小时过期、20个未完成传输、2GiB声明量，磁盘不足507。默认允许跨域调用；管理员开启来源白名单后，外部来源须在名单中。授权、归属和范围检查不变。
 
 ## P1 管理接口
 

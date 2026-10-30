@@ -130,7 +130,10 @@ export async function createApp(config: Config) {
     };
   });
   app.addHook('onRequest', async (req, reply) => {
-    const imageOrigins = (await ctx.storage.imageOrigins()).join(' ');
+    const origins = [...(await ctx.storage.imageOrigins())];
+    const backgroundUrl = ctx.siteSettings().homeBackgroundUrl;
+    if (backgroundUrl) origins.push(new URL(backgroundUrl).origin);
+    const imageOrigins = origins.join(' ');
     reply
       .header('X-Content-Type-Options', 'nosniff')
       .header('Referrer-Policy', 'no-referrer')
@@ -145,7 +148,7 @@ export async function createApp(config: Config) {
       ctx.csrf(req, actor);
     }
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !ctx.allowsOrigin(req))
-      fail(403, 'ORIGIN_FORBIDDEN', '请求来源未获允许，请检查 PUBLIC_URL 或跨域来源白名单');
+      fail(403, 'ORIGIN_FORBIDDEN', '请求来源未获允许，请检查来源格式或跨域白名单设置');
   });
   app.setErrorHandler((error, req, reply) => {
     let status = 500,

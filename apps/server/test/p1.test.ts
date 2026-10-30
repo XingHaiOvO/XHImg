@@ -781,7 +781,10 @@ test('tus rejects incorrect whole-file hash, expired sessions and revoked upload
 test('tus CORS preflight permits whitelisted external clients without weakening resource authorization', async () => {
   const f = await fixture();
   try {
-    f.ctx.db.set('site', { allowedOrigins: ['https://external.example'] });
+    f.ctx.db.set('site', {
+      originWhitelistEnabled: true,
+      allowedOrigins: ['https://external.example'],
+    });
     const preflight = await f.app.inject({
       method: 'OPTIONS',
       url: '/api/v1/resumable',

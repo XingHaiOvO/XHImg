@@ -197,6 +197,16 @@ const bodies: Record<string, any> = {
     {
       title: string,
       description: string,
+      homeBackgroundUrl: {
+        type: 'string',
+        maxLength: 2048,
+        description: '首页背景图片的HTTP(S)地址；空字符串使用默认底色，省略时保留当前值。',
+      },
+      originWhitelistEnabled: {
+        type: 'boolean',
+        description:
+          '默认false，允许任意HTTP(S)来源；开启后限制为同源、PUBLIC_URL或allowedOrigins。旧客户端不传此字段时保留当前开关。',
+      },
       allowedOrigins: { type: 'array', items: { type: 'string', format: 'uri' } },
     },
     ['title', 'description', 'allowedOrigins'],

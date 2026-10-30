@@ -335,6 +335,8 @@ export async function registerResumable(app: FastifyInstance, ctx: Context) {
   });
   app.addContentTypeParser('application/offset+octet-stream', (_req, _body, done) => done(null));
   const tusHandler = async (req: FastifyRequest, reply: FastifyReply) => {
+    if (req.headers.origin && ctx.allowsOrigin(req))
+      reply.header('Access-Control-Allow-Origin', req.headers.origin).header('Vary', 'Origin');
     const uploadId = (req.params as { uploadId?: string }).uploadId;
     if (req.method === 'OPTIONS') {
       if (!ctx.allowsOrigin(req)) fail(403, 'ORIGIN_FORBIDDEN', '请求来源未获允许');

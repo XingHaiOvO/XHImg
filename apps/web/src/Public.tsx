@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   Shuffle,
   Copy,
@@ -266,34 +266,19 @@ function ServiceCard({ service }: { service: any }) {
 export function Home() {
   const { data, error, loading } = useData('public/services');
   const site = useData('public/settings');
-  const gallery = useData('public/images?limit=1');
   const [backgroundFailed, setBackgroundFailed] = useState(false);
-  const [backgroundAttempts, setBackgroundAttempts] = useState(0);
-  const background = gallery.data?.items?.[0];
-  const backgroundLink = useImageSource(background ?? {}, true);
-  const backgroundUrl = background?.thumbnailState === 'ready' ? backgroundLink.source : undefined;
+  const backgroundUrl = site.data?.homeBackgroundUrl;
   useEffect(() => setBackgroundFailed(false), [backgroundUrl]);
-  useEffect(() => {
-    if (background?.thumbnailState !== 'pending' || backgroundAttempts >= 6) return;
-    const timer = setTimeout(() => {
-      setBackgroundAttempts((attempts) => attempts + 1);
-      void gallery.reload();
-    }, 2000);
-    return () => clearTimeout(timer);
-  }, [background?.thumbnailState, backgroundAttempts, gallery.reload]);
   return (
     <main className="home-page">
       <section className="home-banner" aria-labelledby="home-title">
-        {backgroundUrl && !backgroundFailed && !backgroundLink.failed && (
+        {backgroundUrl && !backgroundFailed && (
           <img
             className="home-banner-image"
             src={backgroundUrl}
             alt=""
             fetchPriority="high"
-            onError={() => {
-              if (backgroundLink.direct) backgroundLink.onError();
-              else setBackgroundFailed(true);
-            }}
+            onError={() => setBackgroundFailed(true)}
           />
         )}
         <div className="home-banner-content">
@@ -354,20 +339,36 @@ export function Home() {
   );
 }
 export function Gallery() {
-  const folders = useData('public/folders'),
-    [folder, setFolder] = useState(''),
-    [search, setSearch] = useState(''),
-    [sort, setSort] = useState('newest'),
-    [page, setPage] = useState(1),
-    [preview, setPreview] = useState<any>();
-  const [filter, setFilter] = useState('');
+  const folders = useData('public/folders');
+  const [params, setParams] = useSearchParams();
+  const folder = params.get('folderId') ?? '';
+  const filter = params.get('search') ?? '';
+  const requestedSort = params.get('sort') ?? 'newest';
+  const sort = ['newest', 'oldest', 'name'].includes(requestedSort) ? requestedSort : 'newest';
+  const requestedPage = Number(params.get('page') ?? 1);
+  const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+  const [search, setSearch] = useState(filter);
+  const [preview, setPreview] = useState<any>();
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => {
-    const t = setTimeout(() => {
-      setFilter(search);
-      setPage(1);
-    }, 300);
-    return () => clearTimeout(t);
-  }, [search]);
+    setSearch(params.get('search') ?? '');
+    return () => clearTimeout(searchTimer.current);
+  }, [params]);
+  const updateParams = (changes: Record<string, string>) => {
+    clearTimeout(searchTimer.current);
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        for (const [key, value] of Object.entries(changes)) {
+          if (!value || (key === 'page' && value === '1') || (key === 'sort' && value === 'newest'))
+            next.delete(key);
+          else next.set(key, value);
+        }
+        return next;
+      },
+      { replace: true },
+    );
+  };
   const { data, error, loading } = useData(
     `public/images?${new URLSearchParams({ folderId: folder, search: filter, sort, page: String(page) })}`,
   );
@@ -387,15 +388,22 @@ export function Gallery() {
             aria-label="搜索图片名称或标签"
             placeholder="搜索图片名称或标签"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value;
+              setSearch(value);
+              clearTimeout(searchTimer.current);
+              searchTimer.current = setTimeout(
+                () => updateParams({ search: value, page: '1' }),
+                300,
+              );
+            }}
           />
         </label>
         <select
           aria-label="筛选文件夹"
           value={folder}
           onChange={(e) => {
-            setFolder(e.target.value);
-            setPage(1);
+            updateParams({ folderId: e.target.value, search, page: '1' });
           }}
         >
           <option value="">所有文件夹</option>
@@ -409,14 +417,24 @@ export function Gallery() {
           aria-label="图片排序"
           value={sort}
           onChange={(e) => {
-            setSort(e.target.value);
-            setPage(1);
+            updateParams({ sort: e.target.value, search, page: '1' });
           }}
         >
           <option value="newest">最新上传</option>
           <option value="oldest">最早上传</option>
           <option value="name">按名称</option>
         </select>
+        {(folder || search || filter) && (
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setSearch('');
+              updateParams({ search: '', folderId: '', sort: 'newest', page: '1' });
+            }}
+          >
+            清除筛选
+          </Button>
+        )}
       </div>
       {loading ? (
         <Busy />
@@ -426,13 +444,11 @@ export function Gallery() {
         <div className="masonry">
           {data.items.map((image: any) => (
             <article key={image.id} className="gallery-item">
-              <Thumbnail image={image} onClick={() => setPreview(image)} />
-              <div>
-                <strong>{image.name}</strong>
-                <span>
-                  {image.width} × {image.height}
-                </span>
-              </div>
+              <Thumbnail
+                image={{ ...image, name: image.description || '图片预览' }}
+                actionLabel={image.description ? `查看图片：${image.description}` : '查看图片'}
+                onClick={() => setPreview(image)}
+              />
             </article>
           ))}
         </div>
@@ -443,19 +459,27 @@ export function Gallery() {
           <p>换个文件夹，或稍后再来看看。</p>
         </div>
       )}
-      <div className="pagination">
-        <Button variant="secondary" disabled={page === 1} onClick={() => setPage(page - 1)}>
-          上一页
-        </Button>
-        <span>第 {page} 页</span>
-        <Button
-          variant="secondary"
-          disabled={!data || page * 40 >= data.total}
-          onClick={() => setPage(page + 1)}
-        >
-          下一页
-        </Button>
-      </div>
+      {data?.total > 40 && (
+        <div className="pagination">
+          <Button
+            variant="secondary"
+            disabled={page === 1}
+            onClick={() => updateParams({ page: String(page - 1) })}
+          >
+            上一页
+          </Button>
+          <span>
+            {page} / {Math.ceil(data.total / 40)}
+          </span>
+          <Button
+            variant="secondary"
+            disabled={page * 40 >= data.total}
+            onClick={() => updateParams({ page: String(page + 1) })}
+          >
+            下一页
+          </Button>
+        </div>
+      )}
       <Preview image={preview} close={() => setPreview(undefined)} />
     </main>
   );
@@ -463,72 +487,175 @@ export function Gallery() {
 export function Docs() {
   const endpoint = new URLSearchParams(location.search).get('endpoint') ?? '/api/v1/random';
   const safeEndpoint = endpoint.startsWith('/api/v1/') ? endpoint : '/api/v1/random';
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [toc, setToc] = useState<{ id: string; title: string }[]>([]);
+  const [activeSection, setActiveSection] = useState('');
+  useEffect(() => {
+    const sections = Array.from(
+      bodyRef.current?.querySelectorAll<HTMLElement>('section[id]') ?? [],
+    );
+    setToc(
+      sections.map((section) => ({
+        id: section.id,
+        title: section.querySelector('h2')?.textContent ?? '',
+      })),
+    );
+    setActiveSection(sections[0]?.id ?? '');
+    const observer = new IntersectionObserver(
+      () => {
+        const offset = window.matchMedia('(max-width: 900px)').matches ? 96 : 32;
+        const current = sections.find((section) => {
+          const bounds = section.getBoundingClientRect();
+          return bounds.bottom > offset && bounds.top < window.innerHeight * 0.45;
+        });
+        if (current) setActiveSection(current.id);
+        else if (sections[0] && sections[0].getBoundingClientRect().top >= offset)
+          setActiveSection(sections[0].id);
+      },
+      { rootMargin: '-32px 0px -55% 0px', threshold: 0 },
+    );
+    sections.forEach((section) => observer.observe(section));
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    const link = document.querySelector<HTMLElement>('.docs-toc [aria-current="location"]');
+    const nav = link?.parentElement;
+    if (!link || !nav) return;
+    if (link.offsetLeft < nav.scrollLeft) nav.scrollLeft = link.offsetLeft;
+    else if (link.offsetLeft + link.offsetWidth > nav.scrollLeft + nav.clientWidth)
+      nav.scrollLeft = link.offsetLeft + link.offsetWidth - nav.clientWidth;
+  }, [activeSection]);
   return (
-    <main className="public-main docs-page">
-      <Code2 size={32} />
-      <h1>让图片，接入你的作品。</h1>
-      <p className="muted">随机图片、资源列表与授权上传。所有访问都遵循同一套权限规则。</p>
-      <section>
-        <h2>随机图片</h2>
-        <p>公开服务无需密钥。支持直接图片、302 跳转与 JSON 三种响应，默认直接返回图片。</p>
-        <Code
-          text={`GET ${safeEndpoint}?mode=image\nGET ${safeEndpoint}?mode=redirect\nGET ${safeEndpoint}?mode=json`}
-        />
-        <h3>用作网页图片</h3>
-        <Code text={`<img src="${absolute(safeEndpoint)}" alt="随机图片" />`} />
-        <h3>JavaScript</h3>
-        <Code
-          text={`const response = await fetch('${safeEndpoint}?mode=json');\nif (!response.ok) throw new Error('图片暂不可用');\nconst image = await response.json();\nconsole.log(image.url, image.width, image.height);`}
-        />
-        <h3>Python</h3>
-        <Code
-          text={`import requests\nresponse = requests.get('${absolute(safeEndpoint)}', params={'mode': 'json'})\nresponse.raise_for_status()\nprint(response.json()['url'])`}
-        />
-      </section>
-      <section>
-        <h2>授权上传</h2>
-        <p>
-          每次请求一个文件。仅接受 JPG、PNG、WebP，最大
-          100MB（后台可调低），不接受动画。批量上传请分别提交；文件夹专属接口会固定目标文件夹。启用处理或分类时返回202及状态查询地址。
-        </p>
-        <Code
-          text={`curl -X POST '${absolute('/api/v1/upload')}?folderId=YOUR_FOLDER_ID&visibility=private' \\\n  -H 'Authorization: Bearer YOUR_API_KEY' \\\n  -F 'file=@photo.jpg'\n\nPOST /api/v1/folders/{folderId}/upload\nGET /api/v1/folders/{folderId}/images?page=1&limit=40`}
-        />
-      </section>
-      <section>
-        <h2>私有资源与签名链接</h2>
-        <p>
-          使用 Authorization 请求头传递 API Key。私有图片读取需要 read、private:read
-          及对应文件夹范围。私有随机服务还需要 random 及服务范围。图片标签不便传递请求头时，使用授权
-          JSON 返回的短期签名地址；默认五分钟有效。
-        </p>
-        <Code
-          text={`curl '${absolute(safeEndpoint)}?mode=json' \\\n  -H 'Authorization: Bearer YOUR_API_KEY'`}
-        />
-        <p>
-          撤销密钥、修改权限或停用服务后，相关私有签名链接会失效。签名链接属于临时访问凭证，请勿公开分享。
-        </p>
-      </section>
-      <section>
-        <h2>错误与限流</h2>
-        <p>
-          400 参数无效 · 401 未授权 · 403 权限不足 · 404 不存在或无候选图片 · 413 文件过大 · 415
-          格式不支持 · 429 请求过频 · 503 存储暂不可用。
-        </p>
-        <Code
-          text={
-            '{"error":{"code":"NO_CANDIDATES","message":"没有符合条件的可用图片","requestId":"req-1"}}'
-          }
-        />
-        <a className="text-link" href="/api/v1/openapi.json" target="_blank" rel="noreferrer">
-          查看 OpenAPI 接口清单 <ArrowUpRight size={15} />
-        </a>
-      </section>
-    </main>
+    <div className="public-main docs-layout">
+      <main className="docs-page">
+        <nav className="docs-toc" aria-label="文档目录">
+          {toc.map((item) => (
+            <a
+              key={item.id}
+              href={`#${item.id}`}
+              aria-current={activeSection === item.id ? 'location' : undefined}
+              onClick={() => setActiveSection(item.id)}
+            >
+              {item.title}
+            </a>
+          ))}
+        </nav>
+        <div className="docs-body" ref={bodyRef}>
+          <h1>让图片，接入你的作品。</h1>
+          <p className="muted">随机图片、资源列表与授权上传。所有访问都遵循同一套权限规则。</p>
+          <dl className="docs-meta">
+            <div>
+              <dt>Base URL</dt>
+              <dd>
+                <code>{absolute('/api/v1')}</code>
+              </dd>
+            </div>
+            <div>
+              <dt>Auth</dt>
+              <dd>
+                <code>Authorization: Bearer &lt;API_KEY&gt;</code>
+              </dd>
+            </div>
+            <div>
+              <dt>Response</dt>
+              <dd>
+                <code>image/* · 302 · application/json</code>
+              </dd>
+            </div>
+          </dl>
+          <section id="random-images">
+            <h2>随机图片</h2>
+            <p>公开服务无需密钥。支持直接图片、302 跳转与 JSON 三种响应，默认直接返回图片。</p>
+            <Code
+              text={`# 直接返回图片\nGET ${safeEndpoint}?mode=image\n\n# 302 跳转\nGET ${safeEndpoint}?mode=redirect\n\n# 返回 JSON\nGET ${safeEndpoint}?mode=json`}
+            />
+            <h3>用作网页图片</h3>
+            <Code text={`<img src="${absolute(safeEndpoint)}" alt="随机图片" />`} />
+            <h3>JavaScript</h3>
+            <Code
+              text={`const response = await fetch('${safeEndpoint}?mode=json');\nif (!response.ok) throw new Error('图片暂不可用');\nconst image = await response.json();\nconsole.log(image.url, image.width, image.height);`}
+            />
+            <h3>Python</h3>
+            <Code
+              text={`import requests\nresponse = requests.get('${absolute(safeEndpoint)}', params={'mode': 'json'})\nresponse.raise_for_status()\nprint(response.json()['url'])`}
+            />
+          </section>
+          <section id="authorized-upload">
+            <h2>授权上传</h2>
+            <p>
+              每次请求一个文件。仅接受 JPG、PNG、WebP，最大
+              100MB（后台可调低），不接受动画。批量上传请分别提交；文件夹专属接口会固定目标文件夹。启用处理或分类时返回202及状态查询地址。
+            </p>
+            <Code
+              text={`curl -X POST '${absolute('/api/v1/upload')}?folderId=YOUR_FOLDER_ID&visibility=private' \\\n  -H 'Authorization: Bearer YOUR_API_KEY' \\\n  -F 'file=@photo.jpg'\n\nPOST /api/v1/folders/{folderId}/upload\nGET /api/v1/folders/{folderId}/images?page=1&limit=40`}
+            />
+          </section>
+          <section id="private-resources">
+            <h2>私有资源与签名链接</h2>
+            <p>
+              使用 Authorization 请求头传递 API Key。私有图片读取需要 read、private:read
+              及对应文件夹范围。私有随机服务还需要 random
+              及服务范围。图片标签不便传递请求头时，使用授权 JSON
+              返回的短期签名地址；默认五分钟有效。
+            </p>
+            <Code
+              text={`curl '${absolute(safeEndpoint)}?mode=json' \\\n  -H 'Authorization: Bearer YOUR_API_KEY'`}
+            />
+            <p>
+              撤销密钥、修改权限或停用服务后，相关私有签名链接会失效。签名链接属于临时访问凭证，请勿公开分享。
+            </p>
+          </section>
+          <section id="errors-and-limits">
+            <h2>错误与限流</h2>
+            <div className="docs-table" role="region" aria-label="错误状态码" tabIndex={0}>
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">状态码</th>
+                    <th scope="col">含义</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    [400, '参数无效'],
+                    [401, '未授权'],
+                    [403, '权限不足'],
+                    [404, '不存在或无候选图片'],
+                    [413, '文件过大'],
+                    [415, '格式不支持'],
+                    [429, '请求过频'],
+                    [503, '存储暂不可用'],
+                  ].map(([status, meaning]) => (
+                    <tr key={status}>
+                      <td>{status}</td>
+                      <td>{meaning}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Code
+              text={
+                '{"error":{"code":"NO_CANDIDATES","message":"没有符合条件的可用图片","requestId":"req-1"}}'
+              }
+            />
+            <Button asChild variant="secondary">
+              <a href="/api/v1/openapi.json" target="_blank" rel="noreferrer">
+                查看 OpenAPI 接口清单 <ArrowUpRight size={15} />
+              </a>
+            </Button>
+          </section>
+        </div>
+      </main>
+    </div>
   );
 }
 function Code({ text }: { text: string }) {
   const notice = useNotice();
+  const isUrl = (token: string) => /^(?:https?:\/\/|\/api\/v1\/)/.test(token);
+  const tokens = text.split(
+    /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|https?:\/\/[^\s"'<>\\]+|\/api\/v1\/[^\s"'<>\\]+|\b(?:GET|POST|PUT|DELETE)\b)/g,
+  );
   return (
     <div className="code-block">
       <button
@@ -542,8 +669,40 @@ function Code({ text }: { text: string }) {
       >
         <Copy size={16} />
       </button>
-      <pre>
-        <code>{text}</code>
+      <pre tabIndex={0} aria-label="示例代码">
+        <code>
+          {tokens.map((token, index) => {
+            if (isUrl(token))
+              return (
+                <span className="tok-url" key={index}>
+                  {token}
+                </span>
+              );
+            if (/^["']/.test(token))
+              return (
+                <span className="tok-str" key={index}>
+                  {token
+                    .split(/(https?:\/\/[^\s"'<>\\]+|\/api\/v1\/[^\s"'<>\\]+)/g)
+                    .map((part, i) =>
+                      isUrl(part) ? (
+                        <span className="tok-url" key={i}>
+                          {part}
+                        </span>
+                      ) : (
+                        part
+                      ),
+                    )}
+                </span>
+              );
+            if (/^(GET|POST|PUT|DELETE)$/.test(token))
+              return (
+                <span className="tok-method" key={index}>
+                  {token}
+                </span>
+              );
+            return token;
+          })}
+        </code>
       </pre>
     </div>
   );

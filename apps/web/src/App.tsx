@@ -108,8 +108,10 @@ function PublicShell() {
       <Outlet />
       <footer className="public-footer">
         <Brand />
-        <span>Organize Once. Serve Anywhere.</span>
-        <span>让每一张图片，都有用武之地。</span>
+        <nav aria-label="页脚导航">
+          <Link to="/gallery">图库</Link>
+          <Link to="/docs">API 文档</Link>
+        </nav>
       </footer>
     </div>
   );
