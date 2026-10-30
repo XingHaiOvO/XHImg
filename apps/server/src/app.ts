@@ -130,13 +130,14 @@ export async function createApp(config: Config) {
     };
   });
   app.addHook('onRequest', async (req, reply) => {
+    const imageOrigins = (await ctx.storage.imageOrigins()).join(' ');
     reply
       .header('X-Content-Type-Options', 'nosniff')
       .header('Referrer-Policy', 'no-referrer')
       .header('X-Frame-Options', 'DENY');
     reply.header(
       'Content-Security-Policy',
-      "default-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+      `default-src 'self'; img-src 'self' blob: data: ${imageOrigins}; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`,
     );
     if (req.url.startsWith('/api/v1')) reply.header('Cache-Control', 'no-store');
     if (req.url.startsWith('/api/v1/admin')) {

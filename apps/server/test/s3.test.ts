@@ -128,13 +128,17 @@ test('real AWS SDK streams objects through an isolated S3 HTTP fixture and handl
       assert.equal(upload.statusCode, 201, upload.body);
       const image = upload.json();
       assert(!upload.body.includes('test-secret'));
-      assert(!upload.body.includes('http://127.0.0.1'));
-      assert.equal((await app.inject({ url: image.url })).statusCode, 404);
-      const bytes = await app.inject({ url: image.url, headers });
-      assert.deepEqual(bytes.rawPayload, png);
+      assert(upload.body.includes('X-Amz-Signature'));
+      assert.equal((await app.inject({ url: `/i/${image.id}` })).statusCode, 404);
+      const bytes = await app.inject({ url: `/i/${image.id}`, headers });
+      assert.equal(bytes.statusCode, 302);
+      assert.deepEqual(
+        Buffer.from(await (await fetch(bytes.headers.location!)).arrayBuffer()),
+        png,
+      );
       await worker.tick();
       assert.equal(ctx.image(image.id).thumbnail_state, 'ready');
-      assert.equal((await app.inject({ url: image.thumbnailUrl, headers })).statusCode, 200);
+      assert.equal((await app.inject({ url: `/t/${image.id}`, headers })).statusCode, 302);
       const processed = await app.inject({
         method: 'POST',
         url: `/api/v1/admin/images/${image.id}/reprocess`,
@@ -146,12 +150,28 @@ test('real AWS SDK streams objects through an isolated S3 HTTP fixture and handl
       await worker.tick();
       assert.equal(ctx.image(image.id).format, 'webp');
       assert.equal(
-        (await sharp((await app.inject({ url: image.url, headers })).rawPayload).metadata()).format,
+        (
+          await sharp(
+            Buffer.from(
+              await (
+                await fetch(
+                  (await app.inject({ url: `/i/${image.id}`, headers })).headers.location!,
+                )
+              ).arrayBuffer(),
+            ),
+          ).metadata()
+        ).format,
         'webp',
       );
       assert.deepEqual(
-        (await app.inject({ url: `/api/v1/admin/images/${image.id}/original`, headers }))
-          .rawPayload,
+        Buffer.from(
+          await (
+            await fetch(
+              (await app.inject({ url: `/api/v1/admin/images/${image.id}/original`, headers }))
+                .headers.location!,
+            )
+          ).arrayBuffer(),
+        ),
         png,
       );
       unavailable = true;

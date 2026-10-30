@@ -1,3 +1,4 @@
+import { imageResponse, signObject, sameImageLocation, currentActor } from './image-urls.js';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { basename } from 'node:path';
@@ -44,6 +45,24 @@ export function registerP1(app: FastifyInstance, ctx: Context) {
   app.get('/api/v1/admin/images/:id/original', async (req, reply) => {
     const image = ctx.image(params(req).id!);
     if (image.deleted_at || image.state === 'purging') fail(404, 'NOT_FOUND', '图片已删除');
+    const actor = ctx.admin(req);
+    if (
+      ctx.db.one('SELECT type FROM storage_backends WHERE id=?', image.storage_id)?.type === 's3'
+    ) {
+      await ctx.storage.byId(image.storage_id).head(image.source_key ?? image.object_key);
+      const latest = ctx.image(image.id);
+      if (!sameImageLocation(image, latest)) fail(409, 'IMAGE_CHANGED', '图片状态已变化，请重试');
+      const link = await signObject(ctx, latest, actor, 'source');
+      currentActor(ctx, actor);
+      if (!sameImageLocation(latest, ctx.image(image.id)))
+        fail(409, 'IMAGE_CHANGED', '图片状态已变化，请重试');
+      if (!link) fail(503, 'STORAGE_UNAVAILABLE', '存储暂不可用');
+      return reply
+        .header('Cache-Control', 'private, no-store')
+        .code(302)
+        .header('Location', link.url)
+        .send();
+    }
     const file = await ctx.storage.byId(image.storage_id).get(image.source_key ?? image.object_key);
     reply
       .header('Cache-Control', 'private, no-store')
@@ -150,18 +169,22 @@ export function registerP1(app: FastifyInstance, ctx: Context) {
         status === 'all' ? "classification_status<>'skipped'" : 'classification_status=?',
       args = status === 'all' ? [] : [status];
     return {
-      items: ctx.db
-        .all(
-          `SELECT * FROM images WHERE deleted_at IS NULL AND ${filter} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-          ...args,
-          p.limit,
-          p.offset,
-        )
-        .map((image) => ({
-          ...ctx.imageInfo(image),
-          error: ctx.db.one("SELECT error FROM jobs WHERE image_id=? AND kind='classify'", image.id)
-            ?.error,
-        })),
+      items: await Promise.all(
+        ctx.db
+          .all(
+            `SELECT * FROM images WHERE deleted_at IS NULL AND ${filter} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+            ...args,
+            p.limit,
+            p.offset,
+          )
+          .map(async (image) => ({
+            ...(await imageResponse(ctx, image, ctx.admin(req), { signLocalLinks: false })),
+            error: ctx.db.one(
+              "SELECT error FROM jobs WHERE image_id=? AND kind='classify'",
+              image.id,
+            )?.error,
+          })),
+      ),
       total: ctx.db.one(
         `SELECT COUNT(*) n FROM images WHERE deleted_at IS NULL AND ${filter}`,
         ...args,

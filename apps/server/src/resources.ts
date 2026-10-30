@@ -1,3 +1,4 @@
+import { imageResponse } from './image-urls.js';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { Context, params, query, paging, name, visibility } from './context.js';
@@ -146,7 +147,7 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
     return { ok: true };
   });
 
-  const listImages = (req: FastifyRequest, publicOnly = false, folderId?: string) => {
+  const listImages = async (req: FastifyRequest, publicOnly = false, folderId?: string) => {
     const actor = publicOnly ? { type: 'anonymous' as const } : ctx.actor(req);
     const q = query(req);
     const p = paging(req);
@@ -197,21 +198,23 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
             ? 'name ASC,id ASC'
             : 'created_at DESC,id DESC';
     return {
-      items: ctx.db
-        .all(
-          `SELECT * FROM images WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`,
-          ...args,
-          p.limit,
-          p.offset,
-        )
-        .map((x) => {
-          const info = ctx.imageInfo(x);
-          if (publicOnly) {
-            const { storageId, visibility, effectiveVisibility, deletedAt, ...safe } = info;
-            return safe;
-          }
-          return { ...info, ...ctx.urls(x, actor) };
-        }),
+      items: await Promise.all(
+        ctx.db
+          .all(
+            `SELECT * FROM images WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`,
+            ...args,
+            p.limit,
+            p.offset,
+          )
+          .map(async (x) => {
+            const info = await imageResponse(ctx, x, actor);
+            if (publicOnly) {
+              const { storageId, visibility, effectiveVisibility, deletedAt, ...safe } = info;
+              return safe;
+            }
+            return info;
+          }),
+      ),
       total: ctx.db.one(`SELECT COUNT(*) n FROM images WHERE ${where}`, ...args)!.n,
       page: p.page,
       limit: p.limit,
@@ -266,7 +269,7 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
       ctx.access.refresh();
     });
     ctx.invalidate();
-    return ctx.imageInfo(ctx.image(img.id));
+    return imageResponse(ctx, ctx.image(img.id), ctx.admin(req), { signLocalLinks: false });
   });
   app.post('/api/v1/admin/images/batch', async (req) => {
     const b = z
@@ -359,7 +362,15 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
   app.post('/api/v1/admin/images/:id/sign', async (req) => {
     const image = ctx.image(params(req).id!);
     if (!ctx.access.read(ctx.admin(req), image)) fail(404, 'NOT_FOUND', '图片不存在');
-    return ctx.urls(image, ctx.admin(req));
+    const info = await imageResponse(ctx, image, ctx.admin(req));
+    return {
+      url: info.url,
+      thumbnailUrl: info.thumbnailUrl,
+      logicalUrl: info.logicalUrl,
+      logicalThumbnailUrl: info.logicalThumbnailUrl,
+      urlExpiresAt: info.urlExpiresAt,
+      thumbnailUrlExpiresAt: info.thumbnailUrlExpiresAt,
+    };
   });
 
   app.get('/api/v1/admin/storage-backends', async () => ({
@@ -511,7 +522,7 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
     });
     return safe;
   });
-  app.get('/api/v1/admin/overview', async () => ({
+  app.get('/api/v1/admin/overview', async (req) => ({
     images: ctx.db.one(
       "SELECT COUNT(*) total,COALESCE(SUM(size+CASE WHEN source_key IS NOT NULL AND source_key<>object_key THEN source_size ELSE 0 END),0) bytes,SUM(effective_visibility='public' AND publication_hold=0) publicCount,SUM(effective_visibility='private') privateCount FROM images WHERE deleted_at IS NULL",
     ),
@@ -520,9 +531,11 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
     jobs: ctx.db.all(
       'SELECT id,image_id,kind,state,attempts,error FROM jobs ORDER BY created_at DESC LIMIT 20',
     ),
-    recent: ctx.db
-      .all('SELECT * FROM images WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 8')
-      .map((x) => ctx.imageInfo(x)),
+    recent: await Promise.all(
+      ctx.db
+        .all('SELECT * FROM images WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 8')
+        .map((x) => imageResponse(ctx, x, ctx.admin(req), { signLocalLinks: false })),
+    ),
   }));
   app.post('/api/v1/admin/jobs/:id/retry', async (req) => {
     const job = ctx.db.one("SELECT * FROM jobs WHERE id=? AND state='failed'", params(req).id);

@@ -18,6 +18,15 @@
   --hover: #f0f0f3;
   --danger: #b42332;
   --shadow: 0 12px 45px #2020300b;
+  /* Shape ladder: small / control / card / full. Nothing else. */
+  --r-sm: 8px;
+  --r-md: 10px;
+  --r-lg: 18px;
+  --r-full: 999px;
+  /* One content column shared by header, main and footer. */
+  --page-width: 1184px;
+  --gutter: 28px;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 :root[data-theme='dark'] {
   color-scheme: dark;
@@ -200,7 +209,7 @@ form > .button {
   border: 1px solid transparent;
   min-height: 40px;
   padding: 10px 16px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   font-size: 13px;
   font-weight: 550;
   white-space: nowrap;
@@ -257,7 +266,7 @@ form > .button {
   justify-content: center;
   min-width: 40px;
   min-height: 40px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
 }
 .icon-button:hover {
   background: var(--hover);
@@ -286,7 +295,7 @@ form > .button {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--text);
   color: var(--surface);
   width: 35px;
@@ -297,9 +306,9 @@ form > .button {
   margin-left: -7px;
 }
 .public-header {
-  max-width: 1280px;
+  max-width: calc(var(--page-width) + var(--gutter) * 2);
   margin: auto;
-  padding: 24px 44px;
+  padding: 24px var(--gutter);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -328,8 +337,8 @@ form > .button {
   align-items: center;
 }
 .public-main {
-  max-width: 1192px;
-  padding: 0 32px;
+  max-width: calc(var(--page-width) + var(--gutter) * 2);
+  padding: 0 var(--gutter);
   margin: auto;
 }
 /* Home: photographic masthead above an API directory. */
@@ -343,12 +352,13 @@ form > .button {
   left: 0;
   width: 100%;
   max-width: none;
-  padding: 20px max(28px, calc((100% - 1184px) / 2));
+  padding: 20px max(var(--gutter), calc((100% - var(--page-width)) / 2));
   border-bottom: 1px solid #ffffff1c;
   color: #fff;
 }
 .public-site-home .public-header nav {
-  color: #ffffffb8;
+  /* The masthead sits on an unpredictable photo: keep AA margin at 85% white. */
+  color: #ffffffd9;
 }
 .public-site-home .public-header nav a.active {
   color: #fff;
@@ -394,7 +404,7 @@ form > .button {
   position: absolute;
   inset: 0;
   z-index: -1;
-  background: linear-gradient(180deg, #101824a6, #1520308c 45%, #142032b3);
+  background: linear-gradient(180deg, #101824a6, #0e1826a6 45%, #142032b3);
 }
 .home-banner-content {
   max-width: 700px;
@@ -415,7 +425,7 @@ form > .button {
   width: 64px;
   border: 1px solid #ffffff55;
   background: #ffffff16;
-  border-radius: 19px;
+  border-radius: var(--r-lg);
   backdrop-filter: blur(12px);
 }
 .home-identity h1 {
@@ -429,14 +439,14 @@ form > .button {
 .home-tagline {
   margin-top: 16px;
   font-size: 17px;
-  color: #fffffff0;
+  color: #fff;
   letter-spacing: -0.25px;
 }
 .home-description {
   margin-top: 15px;
   font-size: 14px;
   line-height: 1.95;
-  color: #ffffffd6;
+  color: #fff;
   overflow-wrap: anywhere;
 }
 .home-links {
@@ -449,7 +459,7 @@ form > .button {
 .home-links .button {
   min-width: 142px;
   min-height: 44px;
-  border-radius: 24px;
+  border-radius: var(--r-full);
   padding: 11px 22px;
   font-size: 13px;
 }
@@ -502,7 +512,7 @@ form > .button {
   margin: 0;
   padding: 7px 11px;
   border: 1px solid #ffffff30;
-  border-radius: 20px;
+  border-radius: var(--r-full);
   background: #17202bc7;
   color: #fff;
   backdrop-filter: blur(10px);
@@ -598,7 +608,7 @@ form > .button {
 .service-card {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 18px;
+  border-radius: var(--r-lg);
   overflow: hidden;
 }
 .service-preview {
@@ -662,7 +672,7 @@ form > .button {
   align-items: center;
   border: 1px solid var(--line);
   background: var(--bg);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 0 0 0 10px;
   gap: 4px;
   margin: 18px 0 14px;
@@ -683,8 +693,8 @@ form > .button {
   gap: 4px;
 }
 .public-footer {
-  max-width: 1192px;
-  padding: 0 32px 32px;
+  max-width: calc(var(--page-width) + var(--gutter) * 2);
+  padding: 0 var(--gutter) 32px;
   margin: auto;
   display: flex;
   align-items: center;

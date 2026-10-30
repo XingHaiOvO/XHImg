@@ -210,6 +210,23 @@ const parameter = (name: string, schema: any, description = '') => ({
 });
 export function documentedApi(app: FastifyInstance) {
   const document = structuredClone(app.swagger()) as any;
+  document.components ??= {};
+  document.components.schemas ??= {};
+  document.components.schemas.ImageUrls = object(
+    {
+      url: { type: 'string', description: '可用 S3 对象为 GET 预签名地址，其余为站内地址。' },
+      thumbnailUrl: string,
+      logicalUrl: { type: 'string', description: '站内逻辑地址；私有分享仍需站内签名或当前身份。' },
+      logicalThumbnailUrl: string,
+      urlExpiresAt: {
+        type: 'integer',
+        format: 'int64',
+        description: 'S3 URL 到期 Unix 毫秒；最长5分钟，不超过签发身份有效期。',
+      },
+      thumbnailUrlExpiresAt: { type: 'integer', format: 'int64' },
+    },
+    ['url', 'thumbnailUrl', 'logicalUrl', 'logicalThumbnailUrl'],
+  );
   for (const [path, methods] of Object.entries(document.paths ?? {}) as [string, any][]) {
     for (const [method, op] of Object.entries(methods) as [string, any][]) {
       if (!['get', 'post', 'put', 'patch', 'delete', 'head'].includes(method)) continue;
@@ -387,6 +404,24 @@ export function documentedApi(app: FastifyInstance) {
         parameters.push({ name: 'X-CSRF-Token', in: 'header', required: true, schema: string });
       if (parameters.length) op.parameters = parameters;
       op.responses ??= {};
+      if (path.startsWith('/i/') || path.startsWith('/t/') || path.endsWith('/original')) {
+        op.responses['302'] = {
+          description:
+            'S3 对象：完成当前鉴权及对象检查后跳转，Location 为短期 GET 预签名地址；private, no-store，不返回304。',
+          headers: { Location: { schema: { type: 'string', format: 'uri' } } },
+        };
+      }
+      if (
+        /\/images$/.test(path) ||
+        path.endsWith('/upload') ||
+        path.startsWith('/api/v1/random') ||
+        path.startsWith('/api/v1/uploads/') ||
+        path.endsWith('/classification')
+      ) {
+        op.description =
+          (op.description ?? '') +
+          ' 图片地址字段见ImageUrls：S3按当前读取权限签发最长5分钟直链，回收站、发布隔离及未就绪对象不签发。已签发S3地址不随站内权限变更立即撤销；长期引用使用logicalUrl。随机image模式仍返回字节，redirect模式可直接跳转S3。';
+      }
       if (!Object.keys(op.responses).some((x) => x.startsWith('2')))
         op.responses['200'] = { description: '成功' };
       for (const code of ['400', '401', '403', '404', '409', '413', '415', '429', '503'])

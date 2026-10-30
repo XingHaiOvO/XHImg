@@ -15,6 +15,17 @@ import { z } from 'zod';
 import { fail, type Secrets } from './security.js';
 import type { Store, Row } from './db.js';
 import { pruneObjectDirectories } from './local-directories.js';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+
+export interface DownloadOptions {
+  expiresAt: number;
+  mime: string;
+  disposition: string;
+}
+export interface DownloadLink {
+  url: string;
+  expiresAt: number;
+}
 
 export interface Objects {
   put(key: string, path: string, mime: string, signal?: AbortSignal): Promise<void>;
@@ -22,6 +33,7 @@ export interface Objects {
   head(key: string, signal?: AbortSignal): Promise<number>;
   delete(key: string, signal?: AbortSignal): Promise<void>;
   test(): Promise<void>;
+  presign?(key: string, options: DownloadOptions): Promise<DownloadLink>;
 }
 export class ObjectMissing extends Error {}
 export class ObjectInUse extends Error {}
@@ -151,6 +163,23 @@ export class S3Objects implements Objects {
       throw e;
     }
   }
+  async presign(key: string, options: DownloadOptions): Promise<DownloadLink> {
+    const signingDate = new Date(Math.floor(Date.now() / 1000) * 1000);
+    const expiresIn = Math.min(300, Math.floor((options.expiresAt - signingDate.getTime()) / 1000));
+    if (expiresIn < 1) fail(404, 'LINK_EXPIRED', '链接已失效，请重新获取');
+    const url = await getSignedUrl(
+      this.client,
+      new GetObjectCommand({
+        Bucket: this.config.bucket,
+        Key: key,
+        ResponseContentType: options.mime,
+        ResponseContentDisposition: options.disposition,
+        ResponseCacheControl: 'private, no-store',
+      }),
+      { expiresIn, signingDate },
+    );
+    return { url, expiresAt: signingDate.getTime() + expiresIn * 1000 };
+  }
   async delete(key: string, signal?: AbortSignal) {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.config.bucket, Key: key }), {
       abortSignal: signal,
@@ -166,6 +195,7 @@ export class Storage {
   private wrappers = new WeakMap<Objects, string>();
   private readers = new Map<string, number>();
   private deleting = new Set<string>();
+  private originCache?: { key: string; origins: string[] };
   constructor(
     public db: Store,
     public secrets: Secrets,
@@ -238,6 +268,28 @@ export class Storage {
       this.wrappers.set(wrapped, storageId);
     }
     return wrapped;
+  }
+  async imageOrigins() {
+    const rows = this.db.all("SELECT * FROM storage_backends WHERE type='s3' ORDER BY id");
+    const key = JSON.stringify(rows.map((row) => [row.id, row.config]));
+    if (this.originCache?.key === key) return this.originCache.origins;
+    const origins = new Set<string>();
+    for (const row of rows) {
+      try {
+        const link = await this.adapter(row).presign!('__xhimg_origin__', {
+          expiresAt: Date.now() + 300_000,
+          mime: 'application/octet-stream',
+          disposition: 'inline',
+        });
+        const url = new URL(link.url);
+        if (['http:', 'https:'].includes(url.protocol)) origins.add(url.origin);
+      } catch {
+        /* One unavailable configuration must not prevent opening the application. */
+      }
+    }
+    const result = [...origins];
+    this.originCache = { key, origins: result };
+    return result;
   }
   safe(row: Row) {
     const { config, ...rest } = row;

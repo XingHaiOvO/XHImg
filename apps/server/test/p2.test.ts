@@ -456,7 +456,13 @@ test('local to S3, two configurations sharing a bucket, and S3 to local preserve
       await f.action(task.id, 'start');
       await f.worker.migrations.tick();
       assert.equal(f.task(task.id).state, 'completed');
-      assert.deepEqual((await f.req('GET', `/i/${image.id}`)).rawPayload, f.png);
+      const response = await f.req('GET', `/i/${image.id}`);
+      assert.deepEqual(
+        response.statusCode === 302
+          ? Buffer.from(await (await fetch(response.headers.location!)).arrayBuffer())
+          : response.rawPayload,
+        f.png,
+      );
     }
     for (const task of tasks) {
       await f.action(task.id, 'cleanup');
@@ -464,7 +470,13 @@ test('local to S3, two configurations sharing a bucket, and S3 to local preserve
       assert.equal(f.task(task.id).cleanup_state, 'cleaned');
     }
     assert.equal(objects.size, 0);
-    assert.deepEqual((await f.req('GET', `/i/${image.id}`)).rawPayload, f.png);
+    const response = await f.req('GET', `/i/${image.id}`);
+    assert.deepEqual(
+      response.statusCode === 302
+        ? Buffer.from(await (await fetch(response.headers.location!)).arrayBuffer())
+        : response.rawPayload,
+      f.png,
+    );
     await f.req('PATCH', `/api/v1/admin/storage-backends/${local.id}`, { isDefault: true });
     assert.equal((await f.req('DELETE', '/api/v1/admin/storage-backends/local')).statusCode, 200);
   } finally {
@@ -561,8 +573,10 @@ test('real S3 request abort and restart reuse verified bytes without double comm
       1,
     );
     assert.equal(writes, 2);
+    const restartedRead = await restarted.app.inject({ url: `/i/${image.id}`, headers: f.headers });
+    assert.equal(restartedRead.statusCode, 302);
     assert.deepEqual(
-      (await restarted.app.inject({ url: `/i/${image.id}`, headers: f.headers })).rawPayload,
+      Buffer.from(await (await fetch(restartedRead.headers.location!)).arrayBuffer()),
       f.png,
     );
   } finally {

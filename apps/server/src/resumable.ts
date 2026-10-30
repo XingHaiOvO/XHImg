@@ -1,3 +1,4 @@
+import { imageResponse } from './image-urls.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { Server, Upload } from '@tus/server';
 import { FileStore } from '@tus/file-store';
@@ -387,7 +388,7 @@ export async function registerResumable(app: FastifyInstance, ctx: Context) {
   app.all('/api/v1/resumable', { config: { cors: false } }, tusHandler);
   app.all('/api/v1/resumable/:uploadId', { config: { cors: false } }, tusHandler);
   app.get('/api/v1/uploads/:uploadId', async (req) => {
-    const { session } = uploadOwner(ctx, req, (req.params as any).uploadId);
+    const { session, actor } = uploadOwner(ctx, req, (req.params as any).uploadId);
     if (session.expires_at < Date.now() && ['created', 'uploading'].includes(session.state))
       return {
         uploadId: session.id,
@@ -406,7 +407,13 @@ export async function registerResumable(app: FastifyInstance, ctx: Context) {
       length: session.length,
       expiresAt: session.expires_at,
       error: session.error,
-      image: image ? ctx.imageInfo(image) : null,
+      image: image
+        ? await imageResponse(ctx, image, actor, {
+            allowUnreadable: true,
+            fallback: true,
+            signLocalLinks: false,
+          })
+        : null,
     };
   });
   app.delete('/api/v1/uploads/:uploadId', async (req) => {

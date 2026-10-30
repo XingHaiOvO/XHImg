@@ -192,7 +192,7 @@ function StorageEditor({ value, close, reload }: any) {
         if (!v) close();
       }}
       title={value?.id ? '存储配置' : '添加存储'}
-      description="S3 Bucket 必须保持私有。图片始终通过 XHImg 读取。"
+      description="S3 Bucket 保持私有。鉴权后返回最长有效 5 分钟的临时直链。"
     >
       <form
         onSubmit={(e) => {
@@ -227,6 +227,7 @@ function StorageEditor({ value, close, reload }: any) {
             );
             await reload();
             close();
+            if (draft.type === 's3' && body.config) location.reload();
           });
         }}
       >
@@ -254,6 +255,10 @@ function StorageEditor({ value, close, reload }: any) {
               {value?.id
                 ? '修改连接参数时，必须同时重新输入两项凭证；已有图片的连接不可更换。'
                 : '支持 S3、R2、MinIO 等 S3 兼容服务。'}
+            </p>
+            <p className="muted">
+              Endpoint 必须可被图片访问者访问；HTTPS 站点请使用 HTTPS Endpoint。保存新的 S3
+              连接后会重新加载页面以应用图片来源策略。
             </p>
             {[
               ['endpoint', 'Endpoint'],

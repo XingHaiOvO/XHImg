@@ -53,7 +53,9 @@ Compose 使用命名卷持久化数据，镜像以非 root 用户运行。公网
 
 整理旧图：进入“智能整理 → 手动任务”，选择来源文件夹，搜索并勾选图片，点击“执行整理”。每次最多100张，支持跨页勾选；重复、正在处理/分类或已删除的图片会跳过。执行后进入待分类队列，可在“已完成／无法匹配／失败任务”查看结果。
 
-S3 支持 Endpoint、Region、Bucket、凭证和 Path Style。Bucket 必须关闭公共读取；应用通过 SDK 读写对象、由后端授权后传输。禁用存储不影响已存图片读取；已有图片或未完成上传的存储连接不允许直接更换。`originals/`、`processed/`、`thumbnails/` 前缀需由 XHImg 独占。所有续传先暂存本地，S3 部署也需预留本地磁盘。
+S3 支持 Endpoint、Region、Bucket、凭证和 Path Style。Bucket 必须关闭公共读取；后端鉴权后签发最长5分钟的 GET 临时直链，由浏览器直接读取。Endpoint 必须可被图片访问者访问，HTTPS站点使用HTTPS Endpoint；保存新的S3连接会重新加载页面应用精确图片来源CSP。本地存储及随机图 `image` 模式仍由后端传输。禁用存储不影响已有图片读取；已有图片或未完成上传的存储连接不允许直接更换。`originals/`、`processed/`、`thumbnails/` 前缀需由 XHImg 独占。所有续传先暂存本地，S3 部署也需预留本地磁盘。
+
+S3图片的 `url`、`thumbnailUrl` 是临时地址，`urlExpiresAt`、`thumbnailUrlExpiresAt` 为到期Unix毫秒。长期引用请使用 `logicalUrl`、`logicalThumbnailUrl`，旧 `/i/`、`/t/` 鉴权后跳转到当前S3对象；私有站内分享仍需当前身份或站内签名。已经签发的S3地址不随站内权限修改、密钥撤销立即失效，最多可能继续使用至到期；对象删除、重新处理或迁移源副本清理可能使其提前失效。详情与验证范围见[直链验证记录](docs/s3-links-validation.md)。
 
 ## 存储迁移
 

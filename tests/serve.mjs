@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:http';
+import { s3Fixture } from '../apps/server/test/s3-fixture.ts';
 const require = createRequire(new URL('../apps/server/package.json', import.meta.url));
 const { createApp } = await import('../apps/server/dist/app.js');
 const sharp = require('sharp');
@@ -15,6 +16,8 @@ const runtime = await createApp({
   logger: false,
 });
 await mkdir(resolve('.cache'), { recursive: true });
+const s3 = await s3Fixture();
+await writeFile(resolve('.cache/e2e-s3.json'), JSON.stringify(s3.config));
 await writeFile(resolve('.cache/e2e-token.txt'), runtime.setupToken);
 await writeFile(
   resolve('.cache/e2e-image.png'),
@@ -44,6 +47,7 @@ await runtime.app.listen({ host: '127.0.0.1', port: 9522 });
 for (const signal of ['SIGINT', 'SIGTERM'])
   process.on(signal, () => {
     model.close();
+    void s3.close();
     void runtime.app
       .close()
       .then(() => rm(dir, { recursive: true, force: true }))

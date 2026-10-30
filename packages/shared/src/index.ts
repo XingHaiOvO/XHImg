@@ -34,6 +34,10 @@ export interface ImageInfo {
   migrating?: boolean;
   url: string;
   thumbnailUrl: string;
+  logicalUrl: string;
+  logicalThumbnailUrl: string;
+  urlExpiresAt?: number;
+  thumbnailUrlExpiresAt?: number;
 }
 export interface StorageMigration {
   id: string;

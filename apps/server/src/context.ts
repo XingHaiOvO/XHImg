@@ -3,6 +3,7 @@ import type { Store, Row } from './db.js';
 import { Access, Limiter, Secrets, fail, hash, type Actor } from './security.js';
 import { Storage } from './storage.js';
 import { z } from 'zod';
+import { actorExpiresAt } from './image-urls.js';
 export const visibility = z.enum(['public', 'private']);
 export const name = z.string().trim().min(1).max(120);
 export const resourceId = z.string().max(100);
@@ -147,6 +148,8 @@ export class Context {
       publicationHold: !!row.publication_hold,
       url: `/i/${row.id}`,
       thumbnailUrl: `/t/${row.id}`,
+      logicalUrl: `/i/${row.id}`,
+      logicalThumbnailUrl: `/t/${row.id}`,
     };
   }
   folderInfo(row: Row) {
@@ -168,7 +171,7 @@ export class Context {
       imageId: image.id,
       version: image.access_version,
       variant,
-      expires: Date.now() + 300_000,
+      expires: Math.min(Date.now() + 300_000, actorExpiresAt(this, actor)),
       issuer: actor.type === 'key' ? actor.key.id : actor.session,
       actorType: actor.type,
       serviceId,

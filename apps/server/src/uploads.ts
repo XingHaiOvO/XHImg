@@ -10,6 +10,7 @@ import { ObjectMissing } from './storage.js';
 import { acceptFile, prepareUpload } from './pipeline.js';
 import { uploadLimit } from './policies.js';
 import { imageFilename } from './image-filename.js';
+import { imageResponse, signObject, sameImageLocation } from './image-urls.js';
 
 export async function sendImage(
   ctx: Context,
@@ -33,10 +34,35 @@ export async function sendImage(
       : 'public, no-cache, must-revalidate',
   );
   reply.header('Vary', 'Cookie, Authorization');
+  const isDirect =
+    !random &&
+    !image.publication_hold &&
+    ctx.db.one('SELECT type FROM storage_backends WHERE id=?', image.storage_id)?.type === 's3';
   const etag = `"${image.checksum}-${image.access_version}-${variant}"`;
   // Authorization precedes conditional cache handling, even for a previously public URL.
-  if (!random && req.headers['if-none-match'] === etag) return reply.code(304).send();
+  if (!random && !isDirect && req.headers['if-none-match'] === etag) return reply.code(304).send();
   try {
+    if (isDirect) {
+      reply.header('Cache-Control', 'private, no-store');
+      await ctx.storage.byId(image.storage_id).head(thumbnail ? image.thumb_key : image.object_key);
+      const latest = ctx.image(image.id);
+      const latestActor = sig ? ctx.signedActor(sig, latest, variant) : ctx.actor(req);
+      if (!ctx.access.read(latestActor, latest)) fail(404, 'NOT_FOUND', '图片不存在');
+      if (!sameImageLocation(image, latest)) fail(409, 'IMAGE_CHANGED', '图片状态已变化，请重试');
+      const link = await signObject(
+        ctx,
+        latest,
+        latestActor,
+        thumbnail ? 'thumbnail' : 'image',
+        sig ? ctx.secrets.verify(sig)?.expires : undefined,
+      );
+      const final = ctx.image(image.id);
+      const finalActor = sig ? ctx.signedActor(sig, final, variant) : ctx.actor(req);
+      if (!ctx.access.read(finalActor, final)) fail(404, 'NOT_FOUND', '图片不存在');
+      if (!sameImageLocation(latest, final)) fail(409, 'IMAGE_CHANGED', '图片状态已变化，请重试');
+      if (!link) fail(503, 'STORAGE_UNAVAILABLE', '存储暂不可用');
+      return reply.code(302).header('Location', link.url).send();
+    }
     const object = await ctx.storage
       .byId(image.storage_id)
       .get(thumbnail ? image.thumb_key : image.object_key);
@@ -51,6 +77,8 @@ export async function sendImage(
     return reply.send(object.stream);
   } catch (e) {
     if (e instanceof ObjectMissing) {
+      if (!sameImageLocation(image, ctx.image(image.id)))
+        fail(409, 'IMAGE_CHANGED', '图片状态已变化，请重试');
       if (!thumbnail) ctx.db.run("UPDATE images SET state='missing' WHERE id=?", image.id);
       else ctx.db.run("UPDATE images SET thumbnail_state='failed' WHERE id=?", image.id);
       ctx.invalidate();
@@ -113,17 +141,22 @@ export function registerUploads(app: FastifyInstance, ctx: Context) {
         processing,
         classify: q.classify === undefined ? undefined : q.classify === 'true',
       });
+      const responseImage = await imageResponse(ctx, ctx.image(result.image.id), actor, {
+        allowUnreadable: true,
+        fallback: true,
+        signLocalLinks: false,
+      });
       if (result.async) {
         reply.code(202).header('Location', `/api/v1/uploads/${result.uploadId}`);
         return {
-          ...result.image,
+          ...responseImage,
           uploadId: result.uploadId,
           imageId: result.image.id,
           statusUrl: `/api/v1/uploads/${result.uploadId}`,
         };
       }
       reply.code(201);
-      return result.image;
+      return responseImage;
     } finally {
       ctx.activeUploads--;
       await rm(temp, { force: true }).catch(() => {});

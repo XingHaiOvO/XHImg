@@ -2,6 +2,25 @@
 
 基础路径 `/api/v1`。JSON 错误统一为 `{error:{code,message,requestId}}`。分页使用 `page`（从 1 开始）与 `limit`（默认 40，最大 100）。资源 ID 只用于定位，不代表授权。
 
+## S3 地址与有效期
+
+图片响应增加 `logicalUrl`、`logicalThumbnailUrl`。有当前读取权限且已发布的 S3 图片，其 `url`、就绪的 `thumbnailUrl` 为GET预签名地址；可选 `urlExpiresAt`、`thumbnailUrlExpiresAt` 为到期Unix毫秒。默认最长300秒，不超过会话、API Key或站内签名的剩余有效期。无读取权限的上传者仍可得到上传成功元数据，但不会得到私有对象的S3地址；异步处理/分类未发布、回收站及未就绪缩略图不签发。
+
+旧 `GET /i/{imageId}`、`GET /t/{imageId}` 当前鉴权并检查对象后，对S3返回302及 `Location`，跳转响应为 `private, no-store`，不返回304；本地仍返回字节。管理员原图下载对S3也返回302，目标使用附件文件名。随机 `json` 返回地址及到期字段，`redirect` 直接跳转S3，`image` 仍返回图片字节。
+
+S3签名URL不可追加或改写参数（包括缓存刷新参数），也不能替换域名。客户端应按到期时间重新获取地址，或使用站内逻辑地址重新鉴权。已提交上传遇到临时签发故障仍返回成功及逻辑地址，不重复创建图片；直接读取签发故障返回503。
+
+站内逻辑地址定位当前对象，不受存储迁移和重新处理位置变化影响；私有资源仍需当前授权或有效站内签名。站内签名分享本身也有有效期，不是永久匿名授权。S3已经签发的地址无法随应用权限变更、密钥撤销立即撤回，可能继续访问到期；物理对象删除或清理也可能提前使旧地址失效。
+
+```js
+const response = await fetch('/api/v1/random?mode=json');
+if (!response.ok) throw new Error('没有可用图片');
+const image = await response.json();
+document.querySelector('img').src = image.url; // 临时直链；原样使用
+console.log(image.urlExpiresAt); // S3有效期，Unix毫秒；本地未提供
+console.log(image.logicalUrl); // 站内地址，适合保存引用；私有地址仍需授权
+```
+
 ## 授权
 
 管理员：登录建立 HttpOnly、SameSite=Strict 会话；`GET /auth/me` 返回 CSRF token，所有管理写请求包含 `X-CSRF-Token`。`/admin/*` 不接受 API Key 替代管理员。

@@ -5,6 +5,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f5f5f7" />
     <title>XHImg · 一次整理，随处调用</title>
+    <!-- Paint the page background before the stylesheet arrives. -->
+    <style>
+      html {
+        background: #f5f5f7;
+      }
+      html[data-theme='dark'] {
+        background: #18181b;
+        color-scheme: dark;
+      }
+    </style>
+    <!-- Resolve the saved theme before first paint so there is no light flash. -->
+    <script>
+      (function () {
+        try {
+          var theme = localStorage.getItem('theme') || 'system';
+          var dark =
+            theme === 'dark' ||
+            (theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+        } catch (error) {
+          document.documentElement.dataset.theme = 'light';
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

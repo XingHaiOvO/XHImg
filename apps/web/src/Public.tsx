@@ -15,6 +15,7 @@ import {
 import { api, useData, useNotice, copy, absolute, bytes } from './api';
 import { Button, Busy, Modal } from './components/ui';
 import type { ImageInfo } from '../../../packages/shared/src/index';
+import { useImageSource } from './image-links';
 export function Thumbnail({
   image,
   onClick,
@@ -27,6 +28,7 @@ export function Thumbnail({
   disabled?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
+  const link = useImageSource(image, true);
   const [attempt, setAttempt] = useState(0),
     [loaded, setLoaded] = useState(false);
   const pending = !!image.thumbnailState && image.thumbnailState !== 'ready';
@@ -36,40 +38,49 @@ export function Thumbnail({
     setLoaded(false);
   }, [image.thumbnailUrl, image.thumbnailState, image.previewRevision]);
   useEffect(() => {
-    if (!loaded && (pending || failed) && attempt < 6) {
+    if (!link.direct && !loaded && (pending || failed) && attempt < 6) {
       const timer = setTimeout(() => {
         setFailed(false);
         setAttempt((n) => n + 1);
       }, 2000);
       return () => clearTimeout(timer);
     }
-  }, [loaded, pending, failed, attempt]);
-  const source = image.thumbnailUrl ?? `/t/${image.id}`;
+  }, [loaded, pending, failed, attempt, link.direct]);
+  const source = link.source;
   return (
     <button
       className="image-thumb"
       aria-label={actionLabel ?? `查看 ${image.name ?? '图片'}`}
       disabled={disabled}
-      onClick={onClick}
+      onClick={() => {
+        if (link.failed) link.retry();
+        else onClick?.();
+      }}
       style={
         image.width && image.height
           ? { aspectRatio: `${image.width}/${image.height}` }
           : { aspectRatio: '4/3' }
       }
     >
-      {failed || (pending && attempt === 0) ? (
+      {link.failed || (!link.direct && failed) || (pending && attempt === 0) ? (
         <span className="thumb-placeholder">
           <ImageOff size={24} />
-          <small>预览暂未就绪</small>
+          <small>{link.failed ? '加载失败，点击重试' : '预览暂未就绪'}</small>
         </span>
       ) : (
         <img
           src={
-            source + (attempt ? `${source.includes('?') ? '&' : '?'}previewRetry=${attempt}` : '')
+            source +
+            (!link.direct && attempt
+              ? `${source.includes('?') ? '&' : '?'}previewRetry=${attempt}`
+              : '')
           }
           alt={image.name ?? '随机图片预览'}
           loading="lazy"
-          onError={() => setFailed(true)}
+          onError={() => {
+            if (link.direct) link.onError();
+            else setFailed(true);
+          }}
           onLoad={() => setLoaded(true)}
         />
       )}
@@ -86,6 +97,7 @@ export function Preview({
   extra?: React.ReactNode;
 }) {
   const notice = useNotice();
+  const link = useImageSource(image ?? {});
   return (
     <Modal
       open={!!image}
@@ -97,7 +109,17 @@ export function Preview({
       {image && (
         <>
           <div className="preview-image">
-            <img src={image.url ?? `/i/${image.id}`} alt={image.name ?? '图片'} />
+            {link.failed ? (
+              <div className="empty" role="alert">
+                <ImageOff size={28} />
+                <p>图片加载失败</p>
+                <Button variant="secondary" onClick={link.retry}>
+                  重试图片
+                </Button>
+              </div>
+            ) : (
+              <img src={link.source} onError={link.onError} alt={image.name ?? '图片'} />
+            )}
           </div>
           <div className="image-facts">
             <span>
@@ -117,6 +139,7 @@ export function Preview({
           <div className="button-row">
             <Button
               variant="secondary"
+              disabled={!!image.urlExpiresAt && image.urlExpiresAt <= Date.now()}
               onClick={() =>
                 void copy(absolute(image.url ?? `/i/${image.id}`))
                   .then(() => notice('图片地址已复制'))
@@ -124,14 +147,34 @@ export function Preview({
               }
             >
               <Copy size={16} />
-              复制直链
+              {link.direct ? '复制 S3 临时地址' : '复制直链'}
             </Button>
+            {link.direct && (
+              <Button
+                variant="secondary"
+                onClick={() =>
+                  void copy(absolute(link.logical))
+                    .then(() => notice('站内地址已复制'))
+                    .catch(() => notice('复制失败，请手动复制', true))
+                }
+              >
+                复制站内地址
+              </Button>
+            )}
             <Button asChild variant="ghost">
-              <a href={image.url ?? `/i/${image.id}`} target="_blank" rel="noreferrer">
+              <a href={link.source} target="_blank" rel="noreferrer">
                 打开原图 <ArrowUpRight size={15} />
               </a>
             </Button>
           </div>
+          {link.direct && (
+            <p className="muted">
+              {image.urlExpiresAt && image.urlExpiresAt <= Date.now()
+                ? 'S3 临时地址已过期，当前通过站内地址重新加载。'
+                : 'S3 临时地址最长有效 5 分钟。'}{' '}
+              长期引用请复制站内地址。
+            </p>
+          )}
           {extra}
         </>
       )}
@@ -227,8 +270,8 @@ export function Home() {
   const [backgroundFailed, setBackgroundFailed] = useState(false);
   const [backgroundAttempts, setBackgroundAttempts] = useState(0);
   const background = gallery.data?.items?.[0];
-  const backgroundUrl =
-    background?.thumbnailState === 'ready' ? background.thumbnailUrl : undefined;
+  const backgroundLink = useImageSource(background ?? {}, true);
+  const backgroundUrl = background?.thumbnailState === 'ready' ? backgroundLink.source : undefined;
   useEffect(() => setBackgroundFailed(false), [backgroundUrl]);
   useEffect(() => {
     if (background?.thumbnailState !== 'pending' || backgroundAttempts >= 6) return;
@@ -241,13 +284,16 @@ export function Home() {
   return (
     <main className="home-page">
       <section className="home-banner" aria-labelledby="home-title">
-        {backgroundUrl && !backgroundFailed && (
+        {backgroundUrl && !backgroundFailed && !backgroundLink.failed && (
           <img
             className="home-banner-image"
             src={backgroundUrl}
             alt=""
             fetchPriority="high"
-            onError={() => setBackgroundFailed(true)}
+            onError={() => {
+              if (backgroundLink.direct) backgroundLink.onError();
+              else setBackgroundFailed(true);
+            }}
           />
         )}
         <div className="home-banner-content">

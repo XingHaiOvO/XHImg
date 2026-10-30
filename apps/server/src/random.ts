@@ -1,3 +1,4 @@
+import { imageResponse } from './image-urls.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { randomInt } from 'node:crypto';
 import { z } from 'zod';
@@ -289,7 +290,20 @@ export function registerRandom(app: FastifyInstance, ctx: Context) {
           !ctx.access.service(latestActor, currentEndpoint))
       )
         fail(404, 'NOT_FOUND', '服务已变更');
-      const urls = ctx.urls(image, latestActor, endpoint.id);
+      const info =
+        responseMode === 'image'
+          ? undefined
+          : await imageResponse(ctx, image, latestActor, { serviceId: endpoint.id });
+      const urls = info
+        ? {
+            url: info.url,
+            thumbnailUrl: info.thumbnailUrl,
+            logicalUrl: info.logicalUrl,
+            logicalThumbnailUrl: info.logicalThumbnailUrl,
+            urlExpiresAt: info.urlExpiresAt,
+            thumbnailUrlExpiresAt: info.thumbnailUrlExpiresAt,
+          }
+        : ctx.urls(image, latestActor, endpoint.id);
       ctx.db.run('UPDATE random_endpoints SET successes=successes+1 WHERE id=?', endpoint.id);
       if (responseMode === 'json')
         return {

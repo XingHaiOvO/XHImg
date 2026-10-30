@@ -900,3 +900,158 @@ test('migration controls and key revocation use confirmations and retain retry a
   await confirm.getByRole('button', { name: '确认执行', exact: true }).click();
   await expect(key.getByRole('button', { name: '撤销', exact: true })).toBeDisabled();
 });
+
+test('S3 images load directly with valid signatures, copy both addresses and recover once through logical URLs', async ({
+  page,
+  browser,
+}) => {
+  await loginInteractions(page);
+  const config = JSON.parse(await readFile('.cache/e2e-s3.json', 'utf8'));
+  await page.goto('/admin/settings?tab=storage');
+  await page.getByRole('button', { name: '添加存储', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '添加存储' });
+  await dialog.getByLabel('名称', { exact: true }).fill('S3 直链夹具');
+  await dialog.getByLabel('Endpoint', { exact: true }).fill(config.endpoint);
+  await dialog.getByLabel('Region', { exact: true }).fill(config.region);
+  await dialog.getByLabel('Bucket', { exact: true }).fill(config.bucket);
+  await dialog.getByLabel('Access Key', { exact: true }).fill(config.accessKeyId);
+  await dialog.getByLabel('Secret Key', { exact: true }).fill(config.secretAccessKey);
+  const reloaded = page.waitForEvent('load');
+  await dialog.getByRole('button', { name: '保存存储', exact: true }).click();
+  await reloaded;
+  await expect(page.getByRole('heading', { name: 'S3 直链夹具', exact: true })).toBeVisible();
+  const csrf = (await (await page.request.get('/api/v1/auth/me')).json()).csrf;
+  const headers = { origin: 'http://127.0.0.1:9522', 'x-csrf-token': csrf };
+  const backend = (
+    await (await page.request.get('/api/v1/admin/storage-backends')).json()
+  ).items.find((item: any) => item.name === 'S3 直链夹具');
+  const folder = await (
+    await page.request.post('/api/v1/admin/folders', {
+      headers,
+      data: { name: 'S3 公开图片', visibility: 'public' },
+    })
+  ).json();
+  const params = new URLSearchParams({
+    storageId: backend.id,
+    folderId: folder.id,
+    visibility: 'public',
+    processing: JSON.stringify({ enabled: false }),
+    classify: 'false',
+  });
+  const upload = await page.request.post('/api/v1/upload?' + params, {
+    headers,
+    multipart: {
+      file: {
+        name: 's3-browser.png',
+        mimeType: 'image/png',
+        buffer: await readFile('.cache/e2e-image.png'),
+      },
+    },
+  });
+  expect(upload.status()).toBe(201);
+  const uploaded = await upload.json();
+  expect(uploaded.urlExpiresAt).toBeTruthy();
+  await expect
+    .poll(
+      async () =>
+        (await (await page.request.get('/api/v1/admin/images?search=s3-browser')).json()).items[0]
+          ?.thumbnailState,
+    )
+    .toBe('ready');
+  const pageUrl = `/admin/folders?folder=${folder.id}`;
+  await page.goto(pageUrl);
+  const thumbnail = page.getByRole('button', { name: '查看 s3-browser.png', exact: true });
+  await expect
+    .poll(() => thumbnail.locator('img').evaluate((img: HTMLImageElement) => img.naturalWidth))
+    .toBeGreaterThan(0);
+  const thumbnailSource = await thumbnail.locator('img').getAttribute('src');
+  expect(new URL(thumbnailSource!).origin).toBe(config.endpoint);
+  expect(new URL(thumbnailSource!).searchParams.has('previewRetry')).toBe(false);
+  expect((await page.request.get('/')).headers()['content-security-policy']).toContain(
+    config.endpoint,
+  );
+  await thumbnail.click();
+  const preview = page.getByRole('dialog', { name: 's3-browser.png' });
+  await expect
+    .poll(() =>
+      preview.locator('.preview-image img').evaluate((img: HTMLImageElement) => img.naturalWidth),
+    )
+    .toBeGreaterThan(0);
+  const currentSource = await preview.locator('.preview-image img').getAttribute('src');
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await preview.getByRole('button', { name: '复制 S3 临时地址', exact: true }).click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(currentSource);
+  await preview.getByRole('button', { name: '复制站内地址', exact: true }).click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    `http://127.0.0.1:9522/i/${uploaded.id}`,
+  );
+  await expect(preview).toContainText('最长有效 5 分钟');
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: 'test-results/s3-preview-mobile.png', fullPage: true });
+  await preview.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.evaluate(() => localStorage.setItem('theme', 'dark'));
+  await page.reload();
+  await expect
+    .poll(() => thumbnail.locator('img').evaluate((img: HTMLImageElement) => img.naturalWidth))
+    .toBeGreaterThan(0);
+  await page.screenshot({ path: 'test-results/s3-gallery-dark.png', fullPage: true });
+  const visitor = await browser.newContext();
+  const publicPage = await visitor.newPage();
+  await publicPage.goto(`/gallery?folder=${folder.id}`);
+  await expect
+    .poll(() =>
+      publicPage
+        .getByRole('button', { name: '查看 s3-browser.png', exact: true })
+        .locator('img')
+        .evaluate((img: HTMLImageElement) => img.naturalWidth),
+    )
+    .toBeGreaterThan(0);
+  await visitor.close();
+  // Expired metadata must use the site URL without mutating an S3 signature.
+  await page.route('**/api/v1/admin/images?**', async (route) => {
+    const response = await route.fetch();
+    const data = await response.json();
+    await route.fulfill({
+      json: {
+        ...data,
+        items: data.items.map((item: any) => ({
+          ...item,
+          urlExpiresAt: Date.now() - 1,
+          thumbnailUrlExpiresAt: Date.now() - 1,
+        })),
+      },
+    });
+  });
+  await page.goto(pageUrl);
+  await expect(thumbnail.locator('img')).toHaveAttribute('src', `/t/${uploaded.id}`);
+  await expect
+    .poll(() => thumbnail.locator('img').evaluate((img: HTMLImageElement) => img.naturalWidth))
+    .toBeGreaterThan(0);
+  await thumbnail.click();
+  await expect(
+    preview.getByRole('button', { name: '复制 S3 临时地址', exact: true }),
+  ).toBeDisabled();
+  await expect(preview.locator('.preview-image img')).toHaveAttribute('src', `/i/${uploaded.id}`);
+  await preview.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.unroute('**/api/v1/admin/images?**');
+  // Fail both the direct request and its one automatic fallback. No retry loop.
+  let directCalls = 0,
+    logicalCalls = 0;
+  await page.route(config.endpoint + '/**', (route) => {
+    directCalls++;
+    return route.fulfill({ status: 403, body: 'Expired fixture' });
+  });
+  await page.route(`**/t/${uploaded.id}*`, (route) => {
+    logicalCalls++;
+    return route.fulfill({ status: 404, body: 'Missing fixture' });
+  });
+  await page.goto(pageUrl);
+  await expect(thumbnail).toContainText('加载失败，点击重试');
+  await page.waitForTimeout(4200);
+  expect(directCalls).toBe(1);
+  expect(logicalCalls).toBe(1);
+  await thumbnail.click();
+  await expect.poll(() => logicalCalls).toBe(2);
+  expect(directCalls).toBe(1);
+});
