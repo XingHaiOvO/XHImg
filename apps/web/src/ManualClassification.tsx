@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Play } from 'lucide-react';
+import { Play, Images } from 'lucide-react';
 import { api, json, useData, useAction, useNotice } from './api';
-import { QueryFeedback, ActionFeedback, Button, Busy, Field } from './components/ui';
+import { Pagination, QueryFeedback, ActionFeedback, Button, Busy, Field } from './components/ui';
 import type { ImageInfo } from '../../../packages/shared/src/index';
 
 const available = (image: ImageInfo) =>
@@ -11,9 +11,11 @@ const available = (image: ImageInfo) =>
   !['pending', 'running'].includes(image.classificationStatus ?? '');
 export function ManualClassification({
   folders,
+  config,
   onQueued,
 }: {
   folders: any[];
+  config: ReturnType<typeof useData<any>>;
   onQueued: () => void;
 }) {
   const [folder, setFolder] = useState('uncategorized'),
@@ -23,8 +25,7 @@ export function ManualClassification({
   const result = useData<{ items: ImageInfo[]; total: number }>(
     `admin/images?${new URLSearchParams({ folderId: folder, search, page: String(page) })}`,
   );
-  const config = useData('admin/ai'),
-    action = useAction(),
+  const action = useAction(),
     notice = useNotice();
   const items: ImageInfo[] = result.data?.items ?? [],
     eligible = items.filter(available);
@@ -33,11 +34,11 @@ export function ManualClassification({
     setSelected([]);
   };
   return (
-    <>
+    <div className="manual-classification">
       <section className="panel">
         <h2>手动创建整理任务</h2>
         <p className="muted">
-          选择已有图片，使用当前模型自动归档到允许的目标文件夹。每次最多100张，正在处理或分类的图片会跳过。
+          选择已有图片，使用当前模型自动整理到允许的目标文件夹。每次最多100张，正在处理或整理的图片会跳过。
         </p>
         <div className="form-grid">
           <Field label="来源文件夹" hint="只显示当前文件夹，不包含子文件夹。">
@@ -72,10 +73,10 @@ export function ManualClassification({
         {config.error && <QueryFeedback query={config} />}
         {config.data && !config.data.enabled && (
           <p className="muted">
-            请先在<Link to="/admin/settings?tab=ai">模型配置</Link>中启用 AI 分类。
+            请先在<Link to="/admin/settings?tab=ai">模型配置</Link>中启用 AI 整理。
           </p>
         )}
-        <div className="button-row">
+        <div className="manual-actions">
           <Button
             variant="secondary"
             disabled={result.loading || !!result.error || !eligible.length || action.pending}
@@ -94,8 +95,9 @@ export function ManualClassification({
           >
             清空选择
           </Button>
-          <span className="muted">已选 {selected.length} / 100 张</span>
+          <span className="manual-selection-count">已选 {selected.length} / 100</span>
           <Button
+            className="manual-execute"
             disabled={!selected.length || !config.data?.enabled || action.pending}
             onClick={() =>
               void action.run(async () => {
@@ -167,7 +169,7 @@ export function ManualClassification({
                     {!available(image)
                       ? '处理中或暂不可用'
                       : image.classificationStatus === 'skipped'
-                        ? '尚未分类'
+                        ? '未分类'
                         : '可重新整理'}
                   </td>
                   <td>{folders.find((f) => f.id === image.folderId)?.name ?? '未分类'}</td>
@@ -197,31 +199,19 @@ export function ManualClassification({
         </div>
       ) : (
         <div className="empty">
-          <h3>没有符合条件的图片。</h3>
+          <Images size={32} />
+          <h3>没有符合条件的图片</h3>
           <p>更换文件夹或搜索内容后再选择。</p>
+          <Button asChild variant="secondary">
+            <Link to="/admin/organize">去上传</Link>
+          </Button>
         </div>
       )}
-      <div className="pagination">
-        <Button
-          variant="secondary"
-          disabled={page === 1 || action.pending}
-          onClick={() => setPage(page - 1)}
-        >
-          上一页
-        </Button>
-        <span>
-          第 {page} 页 · 共 {result.data?.total ?? 0} 张
-        </span>
-        <Button
-          variant="secondary"
-          disabled={
-            result.loading || !result.data || page * 40 >= result.data.total || action.pending
-          }
-          onClick={() => setPage(page + 1)}
-        >
-          下一页
-        </Button>
-      </div>
-    </>
+      {(result.data?.total ?? 0) > 40 && (
+        <fieldset className="pagination-guard" disabled={action.pending || result.loading}>
+          <Pagination total={result.data?.total ?? 0} page={page} onChange={setPage} />
+        </fieldset>
+      )}
+    </div>
   );
 }

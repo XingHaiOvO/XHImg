@@ -160,6 +160,26 @@ export function registerP1(app: FastifyInstance, ctx: Context) {
     });
     return { queued, skipped };
   });
+  app.get('/api/v1/admin/classification/stats', async () => {
+    const counts: Record<string, number> = {
+      pending: 0,
+      running: 0,
+      completed: 0,
+      unmatched: 0,
+      failed: 0,
+      canceled: 0,
+      skipped: 0,
+    };
+    const rows = ctx.db.all(
+      'SELECT classification_status AS status, COUNT(*) AS n FROM images WHERE deleted_at IS NULL GROUP BY classification_status',
+    );
+    let total = 0;
+    for (const row of rows) {
+      total += row.n;
+      if (Object.hasOwn(counts, row.status)) counts[row.status] = row.n;
+    }
+    return { counts, total: total - counts.skipped! };
+  });
   app.get('/api/v1/admin/classification', async (req) => {
     const p = paging(req),
       status = z

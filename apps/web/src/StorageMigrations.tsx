@@ -2,7 +2,16 @@ import { useSearchParams } from 'react-router-dom';
 import { useState } from 'react';
 import { ArrowRightLeft, Plus, RefreshCw } from 'lucide-react';
 import { api, json, useData, useAction, usePolling, bytes } from './api';
-import { QueryFeedback, ActionFeedback, Button, Modal, Field, Check, Busy } from './components/ui';
+import {
+  Pagination,
+  QueryFeedback,
+  ActionFeedback,
+  Button,
+  Modal,
+  Field,
+  Check,
+  Busy,
+} from './components/ui';
 import type { StorageMigration, MigrationItem } from '../../../packages/shared/src/index';
 
 const states: Record<string, string> = {
@@ -308,19 +317,7 @@ export function StorageMigrations() {
           <p>创建任务，先预览已有图片的迁移清单。</p>
         </div>
       )}
-      <div className="pagination">
-        <Button variant="secondary" disabled={page === 1} onClick={() => setPage(page - 1)}>
-          上一页
-        </Button>
-        <span>第 {page} 页</span>
-        <Button
-          variant="secondary"
-          disabled={!list.data || page * 40 >= list.data.total}
-          onClick={() => setPage(page + 1)}
-        >
-          下一页
-        </Button>
-      </div>
+      <Pagination total={list.data?.total ?? 0} page={page} onChange={setPage} />
       {selected && <MigrationDetails key={selected} id={selected} onChange={list.reload} />}
     </>
   );
@@ -503,19 +500,7 @@ function MigrationDetails({ id, onChange }: { id: string; onChange: () => Promis
           </table>
         </div>
       )}
-      <div className="pagination">
-        <Button variant="secondary" disabled={page === 1} onClick={() => setPage(page - 1)}>
-          上一页明细
-        </Button>
-        <span>第 {page} 页</span>
-        <Button
-          variant="secondary"
-          disabled={!items.data || page * 40 >= items.data.total}
-          onClick={() => setPage(page + 1)}
-        >
-          下一页明细
-        </Button>
-      </div>
+      <Pagination total={items.data?.total ?? 0} page={page} onChange={setPage} />
       <Modal
         busy={action.pending}
         cancelFocus

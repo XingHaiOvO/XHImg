@@ -13,7 +13,7 @@ import {
   Aperture,
 } from 'lucide-react';
 import { api, useData, useNotice, copy, absolute, bytes } from './api';
-import { Button, Busy, Modal } from './components/ui';
+import { Pagination, Button, Busy, Modal } from './components/ui';
 import type { ImageInfo } from '../../../packages/shared/src/index';
 import { useImageSource } from './image-links';
 export function Thumbnail({
@@ -460,25 +460,11 @@ export function Gallery() {
         </div>
       )}
       {data?.total > 40 && (
-        <div className="pagination">
-          <Button
-            variant="secondary"
-            disabled={page === 1}
-            onClick={() => updateParams({ page: String(page - 1) })}
-          >
-            上一页
-          </Button>
-          <span>
-            {page} / {Math.ceil(data.total / 40)}
-          </span>
-          <Button
-            variant="secondary"
-            disabled={page * 40 >= data.total}
-            onClick={() => updateParams({ page: String(page + 1) })}
-          >
-            下一页
-          </Button>
-        </div>
+        <Pagination
+          total={data?.total ?? 0}
+          page={page}
+          onChange={(next) => updateParams({ page: String(next) })}
+        />
       )}
       <Preview image={preview} close={() => setPreview(undefined)} />
     </main>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, useId, lazy, Suspense } from 'react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 const MigrationCreateDialog = lazy(() =>
   import('./StorageMigrations').then((module) => ({ default: module.MigrationCreateDialog })),
@@ -14,9 +14,12 @@ import {
   Copy,
   RefreshCw,
   ArrowUpRight,
+  X,
+  Pencil,
 } from 'lucide-react';
 import { api, json, useData, useAction, useNotice, bytes, copy, absolute } from './api';
 import {
+  Pagination,
   QueryFeedback,
   useConfirm,
   ActionFeedback,
@@ -26,6 +29,7 @@ import {
   Busy,
 } from './components/ui';
 import { Thumbnail, Preview } from './Public';
+import { useImageSource } from './image-links';
 import { UploadCenter } from './components/UploadCenter';
 import { ProcessingEditor, processingDefaults } from './components/ProcessingEditor';
 import { Check } from './components/ui';
@@ -193,6 +197,7 @@ function FolderOptions({ folders, exclude }: { folders: any[]; exclude?: string 
   );
 }
 export function Resources() {
+  const confirm = useConfirm();
   const [searchParams, setSearchParams] = useSearchParams(),
     folderId = searchParams.get('folder') ?? '',
     folders = useData('admin/folders'),
@@ -279,7 +284,7 @@ export function Resources() {
         </div>
       ));
   return (
-    <>
+    <div className="resources-page">
       <PageHeading title="资源文件夹" description="把图片整理好，让每一个文件夹成为服务。">
         <div className="button-row">
           <Button variant="secondary" onClick={() => setCreateOpen(true)}>
@@ -323,11 +328,11 @@ export function Resources() {
               <FolderOpen size={24} />
               <div>
                 <h2>{folder?.name ?? '所有图片'}</h2>
-                <span className="muted">
-                  {folder
-                    ? `${folder.count} 张图片 · ${bytes(folder.size)}`
-                    : `${images.data?.total ?? 0} 张图片`}
-                </span>
+                {folder && (
+                  <span className="muted">
+                    {folder.count} 张图片 · {bytes(folder.size)}
+                  </span>
+                )}
               </div>
             </div>
             {folder && (
@@ -337,7 +342,7 @@ export function Resources() {
                 ) : (
                   <LockKeyhole size={13} />
                 )}
-                有效{folder.effective_visibility === 'public' ? '公开' : '私有'}
+                {folder.effective_visibility === 'public' ? '公开' : '私有'}
               </span>
             )}
           </div>
@@ -368,55 +373,106 @@ export function Resources() {
                 <Button variant="ghost" onClick={() => void reload()} aria-label="刷新图片">
                   <RefreshCw size={16} />
                 </Button>
-              </div>
-              {selected.length > 0 && (
-                <div className="selection-bar">
-                  <span>已选 {selected.length} 项</span>
+                {selected.length > 0 && (
                   <Button
-                    variant="secondary"
-                    disabled={action.pending || selected.length > 100}
+                    variant="ghost"
+                    className="resource-migrate"
+                    disabled={!selected.length || selected.length > 100 || action.pending}
                     onClick={() => setMigrationOpen(true)}
                   >
                     迁移存储
                   </Button>
-                  <select
-                    aria-label="批量移动目标"
-                    value={moveTarget}
-                    onChange={(e) => setMoveTarget(e.target.value)}
-                  >
-                    <option value="">目标文件夹</option>
-                    <FolderOptions folders={allFolders} />
-                  </select>
-                  <Button
-                    variant="secondary"
-                    disabled={!moveTarget || action.pending}
-                    onClick={() => void batch('move', { folderId: moveTarget })}
-                  >
-                    移动
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    disabled={action.pending}
-                    onClick={() => void batch('visibility', { visibility: 'public' })}
-                  >
-                    公开
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    disabled={action.pending}
-                    onClick={() => void batch('visibility', { visibility: 'private' })}
-                  >
-                    私有
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    disabled={action.pending}
-                    onClick={() => void batch('delete')}
-                  >
-                    移入回收站
-                  </Button>
-                </div>
-              )}
+                )}
+                <span className="resource-count muted">共 {images.data?.total ?? 0} 张</span>
+              </div>
+              <div className="selection-slot">
+                {selected.length > 0 ? (
+                  <div className="selection-bar">
+                    <span>已选 {selected.length} 项</span>
+                    <button
+                      className="text-link"
+                      disabled={action.pending}
+                      onClick={() =>
+                        setSelected(
+                          Array.from(
+                            new Set([
+                              ...selected,
+                              ...(images.data?.items ?? []).map((image: any) => image.id),
+                            ]),
+                          ),
+                        )
+                      }
+                    >
+                      全选本页
+                    </button>
+                    <button
+                      className="text-link"
+                      disabled={action.pending}
+                      onClick={() => setSelected([])}
+                    >
+                      清除
+                    </button>
+                    <select
+                      aria-label="批量移动目标"
+                      value={moveTarget}
+                      onChange={(e) => setMoveTarget(e.target.value)}
+                    >
+                      <option value="">目标文件夹</option>
+                      <FolderOptions folders={allFolders} />
+                    </select>
+                    <Button
+                      variant="secondary"
+                      disabled={!moveTarget || action.pending || selected.length > 100}
+                      onClick={() => void batch('move', { folderId: moveTarget })}
+                    >
+                      移动
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      disabled={action.pending || selected.length > 100}
+                      onClick={() => void batch('visibility', { visibility: 'public' })}
+                    >
+                      公开
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      disabled={action.pending || selected.length > 100}
+                      onClick={() => void batch('visibility', { visibility: 'private' })}
+                    >
+                      私有
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      disabled={action.pending || selected.length > 100}
+                      onClick={async () => {
+                        if (
+                          await confirm(`将 ${selected.length} 张图片移入回收站？可在回收站恢复。`)
+                        )
+                          void batch('delete');
+                      }}
+                    >
+                      移入回收站
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="selection-empty">
+                    <button
+                      className="text-link"
+                      disabled={!images.data?.items.length}
+                      onClick={() =>
+                        setSelected((images.data?.items ?? []).map((image: any) => image.id))
+                      }
+                    >
+                      全选本页
+                    </button>
+                  </div>
+                )}
+                {selected.length > 100 && (
+                  <p className="form-error" role="alert">
+                    每次最多操作 100 张图片，请减少选中数量。
+                  </p>
+                )}
+              </div>
               <QueryFeedback query={images} backgroundOnly />
               {images.loading ? (
                 <Busy />
@@ -428,9 +484,26 @@ export function Resources() {
                     <article
                       className={'image-card ' + (selected.includes(image.id) ? 'selected' : '')}
                       key={image.id}
+                      onClickCapture={(e) => {
+                        if (
+                          (e.ctrlKey || e.metaKey) &&
+                          (e.target as HTMLElement).closest('.image-thumb')
+                        ) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setSelected((current) =>
+                            current.includes(image.id)
+                              ? current.filter((id) => id !== image.id)
+                              : [...current, image.id],
+                          );
+                        }
+                      }}
                     >
                       <div className="image-card-top">
-                        <Thumbnail image={image} onClick={() => setPreview(image)} />
+                        <Thumbnail
+                          image={{ ...image, width: 4, height: 3 }}
+                          onClick={() => setPreview(image)}
+                        />
                         <input
                           type="checkbox"
                           aria-label={`选择 ${image.name}`}
@@ -443,25 +516,33 @@ export function Resources() {
                             )
                           }
                         />
-                        <span
-                          className="visibility-dot"
-                          title={image.effectiveVisibility === 'public' ? '公开' : '私有'}
-                        >
-                          {image.effectiveVisibility === 'public' ? (
-                            <Globe size={13} />
-                          ) : (
-                            <LockKeyhole size={13} />
-                          )}
-                        </span>
                       </div>
                       <div className="image-card-meta">
                         <strong title={image.name}>{image.name}</strong>
-                        <small>
-                          {image.width} × {image.height} · {bytes(image.size)}
-                        </small>
-                        <button className="text-link" onClick={() => setEditor(image)}>
-                          编辑信息
-                        </button>
+                        <div className="image-card-details">
+                          <small>
+                            {image.width} × {image.height} · {bytes(image.size)}
+                          </small>
+                          <div className="image-card-actions">
+                            <span
+                              className="visibility-dot"
+                              title={image.effectiveVisibility === 'public' ? '公开' : '私有'}
+                            >
+                              {image.effectiveVisibility === 'public' ? (
+                                <Globe size={13} />
+                              ) : (
+                                <LockKeyhole size={13} />
+                              )}
+                            </span>
+                            <button
+                              className="icon-button image-edit"
+                              aria-label="编辑信息"
+                              onClick={() => setEditor(image)}
+                            >
+                              <Pencil size={16} />
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     </article>
                   ))}
@@ -480,19 +561,9 @@ export function Resources() {
                   </Button>
                 </div>
               )}
-              <div className="pagination">
-                <Button variant="secondary" disabled={page === 1} onClick={() => setPage(page - 1)}>
-                  上一页
-                </Button>
-                <span>第 {page} 页</span>
-                <Button
-                  variant="secondary"
-                  disabled={!images.data || page * 40 >= images.data.total}
-                  onClick={() => setPage(page + 1)}
-                >
-                  下一页
-                </Button>
-              </div>
+              {images.data?.total > 40 && (
+                <Pagination total={images.data?.total ?? 0} page={page} onChange={setPage} />
+              )}
             </>
           ) : (
             <FolderPanel
@@ -539,7 +610,7 @@ export function Resources() {
         folders={allFolders}
         reload={reload}
       />
-    </>
+    </div>
   );
 }
 function FolderCreate({ open, close, folders, parentId, reload }: any) {
@@ -598,10 +669,74 @@ function FolderCreate({ open, close, folders, parentId, reload }: any) {
     </Modal>
   );
 }
+function FolderApiPanel({ folder }: { folder: any }) {
+  const services = useData('admin/random-services');
+  const notice = useNotice();
+  const service = services.data?.items.find(
+    (item: any) => item.kind === 'folder' && (item.folder_id ?? item.folderId) === folder.id,
+  );
+  const base = `/api/v1/folders/${folder.id}/`;
+  const copyUrl = (path: string) =>
+    void copy(absolute(path))
+      .then(() => notice('已复制'))
+      .catch(() => notice('复制失败', true));
+  return (
+    <div className="folder-api">
+      <h3>文件夹即 API</h3>
+      <p className="muted">上传自动归入此文件夹；私有资源始终需要明确授权。</p>
+      <div className="api-prefix">
+        <code>{base}</code>
+        <button
+          type="button"
+          className="icon-button api-copy"
+          aria-label="复制 API 公共前缀"
+          onClick={() => copyUrl(base)}
+        >
+          <span className="api-copy-label">复制</span>
+          <Copy size={16} />
+        </button>
+      </div>
+      {[
+        ['专属上传', 'POST', 'upload'],
+        ['图片列表', 'GET', 'images'],
+        ['随机图片', 'GET', 'random'],
+      ].map(([label, method, path]) => (
+        <div className="api-row" key={path}>
+          <strong>{label}</strong>
+          <code>
+            {method} {path}
+          </code>
+          {path === 'random' && (
+            <div className="api-service-state">
+              {service && <span className="badge">{service.enabled ? '已启用' : '未启用'}</span>}
+              {!service?.enabled && (
+                <Link className="text-link" to={`/admin/services?folder=${folder.id}`}>
+                  去配置
+                </Link>
+              )}
+            </div>
+          )}
+          <button
+            type="button"
+            className="icon-button api-copy"
+            aria-label={`复制${label}接口`}
+            onClick={() => copyUrl(base + path)}
+          >
+            <span className="api-copy-label">复制</span>
+            <Copy size={16} />
+          </button>
+        </div>
+      ))}
+      <p className="muted">上传接口使用具有此文件夹 upload 范围的 API Key。</p>
+      <Link className="text-link" to="/docs">
+        查看上传与鉴权示例 <ArrowUpRight size={15} />
+      </Link>
+    </div>
+  );
+}
 function FolderPanel({ folder, folders, storages, tab, reload, leave }: any) {
   const confirm = useConfirm();
   const [draft, setDraft] = useState<any>({}),
-    notice = useNotice(),
     action = useAction();
   useEffect(() => {
     setDraft({
@@ -616,182 +751,177 @@ function FolderPanel({ folder, folders, storages, tab, reload, leave }: any) {
       aiEnabled: !!folder.ai_enabled,
     });
   }, [folder]);
+  const permissionChain = [folder];
+  const seen = new Set([folder.id]);
+  while (permissionChain.length < 3 && permissionChain[0].parent_id) {
+    const parent = folders.find((item: any) => item.id === permissionChain[0].parent_id);
+    if (!parent || seen.has(parent.id)) {
+      permissionChain.splice(0, permissionChain.length, folder);
+      break;
+    }
+    seen.add(parent.id);
+    permissionChain.unshift(parent);
+  }
   const save = () =>
     action.run(async () => {
       await api(`admin/folders/${folder.id}`, json('PATCH', draft));
       await reload();
     });
-  if (tab === 'API')
-    return (
-      <div className="folder-panel">
-        <h3>文件夹即 API</h3>
-        <p className="muted">上传自动归入此文件夹；私有资源始终需要明确授权。</p>
-        {[
-          ['专属上传', `/api/v1/folders/${folder.id}/upload`],
-          ['图片列表', `/api/v1/folders/${folder.id}/images`],
-          ['随机图片', `/api/v1/folders/${folder.id}/random`],
-        ].map(([label, path]) => (
-          <div className="api-row" key={label}>
-            <strong>{label}</strong>
-            <code>{path}</code>
-            <Button
-              variant="ghost"
-              aria-label={`复制${label}接口`}
-              onClick={() =>
-                void copy(absolute(path!))
-                  .then(() => notice('已复制'))
-                  .catch(() => notice('复制失败', true))
-              }
-            >
-              <Copy size={16} />
-            </Button>
-          </div>
-        ))}
-        <p>
-          随机接口需先在随机图服务中创建并启用。上传接口使用具有此文件夹 upload 范围的 API Key。
-        </p>
-        <Button asChild variant="secondary">
-          <Link to={`/admin/services?folder=${folder.id}`}>
-            配置随机图服务 <ArrowUpRight size={15} />
-          </Link>
-        </Button>
-        <p>
-          <Link to="/docs">查看上传与鉴权示例</Link>
-        </p>
-        <p className="muted">文件夹 ID：{folder.id}</p>
-      </div>
-    );
   return (
     <div className="folder-panel">
       <form
+        className="panel-card"
         onSubmit={(e) => {
           e.preventDefault();
           void save();
         }}
       >
-        {tab === '权限' ? (
-          <>
-            <h3>权限从上至下，始终一致。</h3>
-            <p className="muted">
-              自身权限不会覆盖上级限制。改为公开也不会覆盖单张图片的私有设置。
-            </p>
-            <Field label="文件夹自身权限">
-              <select
-                disabled={!!folder.system}
-                value={draft.visibility ?? 'private'}
-                onChange={(e) => setDraft({ ...draft, visibility: e.target.value })}
-              >
-                <option value="private">私有</option>
-                <option value="public">公开</option>
-              </select>
-            </Field>
-            <p>当前有效权限：{folder.effective_visibility === 'public' ? '公开' : '私有'}</p>
-          </>
-        ) : tab === '存储' ? (
-          <>
-            <h3>默认上传存储</h3>
-            <p className="muted">
-              只影响后续上传，不移动已有图片。授权的请求显式指定存储时优先使用请求值。
-            </p>
-            <Field label="文件夹默认存储">
-              <select
-                value={draft.storageId ?? ''}
-                onChange={(e) => setDraft({ ...draft, storageId: e.target.value || null })}
-              >
-                <option value="">使用系统默认</option>
-                {storages
-                  .filter((s: any) => s.enabled)
-                  .map((s: any) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-              </select>
-            </Field>
-          </>
-        ) : (
-          <>
-            <Field label="名称">
-              <input
-                disabled={!!folder.system}
-                value={draft.name ?? ''}
-                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                required
-              />
-            </Field>
-            <Check
-              label="参与 AI 自动分类"
-              disabled={!!folder.system}
-              checked={!!draft.aiEnabled}
-              onChange={(e) => setDraft({ ...draft, aiEnabled: e.target.checked })}
-            />
-            <Check
-              label="继承系统图片处理策略"
-              checked={draft.processingPolicy == null}
-              onChange={(e) =>
-                setDraft({
-                  ...draft,
-                  processingPolicy: e.target.checked ? null : { ...processingDefaults },
-                })
+        <div className="folder-panel-body">
+          {tab === 'API' ? (
+            <FolderApiPanel folder={folder} />
+          ) : tab === '权限' ? (
+            <>
+              <h3>权限从上至下，始终一致。</h3>
+              <p className="muted">
+                自身权限不会覆盖上级限制。改为公开也不会覆盖单张图片的私有设置。
+              </p>
+              <div className="permission-chain">
+                <span>{permissionChain.map((item: any) => item.name).join(' › ')}</span>
+                <span>此层权限：{draft.visibility === 'public' ? '公开' : '私有'}</span>
+              </div>
+              <div className="permission-field">
+                <Field label="文件夹自身权限">
+                  <select
+                    disabled={!!folder.system}
+                    value={draft.visibility ?? 'private'}
+                    onChange={(e) => setDraft({ ...draft, visibility: e.target.value })}
+                  >
+                    <option value="private">私有（仅授权访问）</option>
+                    <option value="public">公开（任何人可访问）</option>
+                  </select>
+                </Field>
+              </div>
+              {folder.count != null && (
+                <p className="permission-note">此文件夹 {folder.count} 张图片</p>
+              )}
+              {draft.visibility === 'public' && folder.visibility !== 'public' && (
+                <p className="permission-note">保存后，此文件夹下的图片将对匿名请求可见。</p>
+              )}
+              <p>当前有效权限：{folder.effective_visibility === 'public' ? '公开' : '私有'}</p>
+            </>
+          ) : tab === '存储' ? (
+            <>
+              <h3>默认上传存储</h3>
+              <p className="muted">
+                只影响后续上传，不移动已有图片。授权的请求显式指定存储时优先使用请求值。
+              </p>
+              <Field label="文件夹默认存储">
+                <select
+                  value={draft.storageId ?? ''}
+                  onChange={(e) => setDraft({ ...draft, storageId: e.target.value || null })}
+                >
+                  <option value="">使用系统默认</option>
+                  {storages
+                    .filter((s: any) => s.enabled)
+                    .map((s: any) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                </select>
+              </Field>
+            </>
+          ) : (
+            <div className="folder-settings-grid">
+              <div>
+                <Field label="名称">
+                  <input
+                    disabled={!!folder.system}
+                    value={draft.name ?? ''}
+                    onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                    required
+                  />
+                </Field>
+                <Check
+                  label="参与 AI 自动分类"
+                  disabled={!!folder.system}
+                  checked={!!draft.aiEnabled}
+                  onChange={(e) => setDraft({ ...draft, aiEnabled: e.target.checked })}
+                />
+                <Check
+                  label="继承系统图片处理策略"
+                  checked={draft.processingPolicy == null}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      processingPolicy: e.target.checked ? null : { ...processingDefaults },
+                    })
+                  }
+                />
+                {draft.processingPolicy != null && (
+                  <ProcessingEditor
+                    value={draft.processingPolicy}
+                    onChange={(value) => setDraft({ ...draft, processingPolicy: value })}
+                  />
+                )}
+                <Field label="描述">
+                  <textarea
+                    value={draft.description ?? ''}
+                    onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+                    maxLength={1000}
+                  />
+                </Field>
+              </div>
+              <div>
+                <Field label="上级文件夹">
+                  <select
+                    disabled={!!folder.system}
+                    value={draft.parentId ?? ''}
+                    onChange={(e) => setDraft({ ...draft, parentId: e.target.value || null })}
+                  >
+                    <option value="">顶级文件夹</option>
+                    <FolderOptions folders={folders} exclude={folder.id} />
+                  </select>
+                </Field>
+                <Field label="排序值">
+                  <input
+                    type="number"
+                    value={draft.sortOrder ?? 0}
+                    onChange={(e) => setDraft({ ...draft, sortOrder: Number(e.target.value) })}
+                  />
+                </Field>
+                <Field label="封面图片 ID（可选）" hint="必须是当前文件夹内未删除图片的 ID。">
+                  <input
+                    value={draft.coverId ?? ''}
+                    onChange={(e) => setDraft({ ...draft, coverId: e.target.value || null })}
+                  />
+                </Field>
+              </div>
+            </div>
+          )}
+        </div>
+        <footer className="panel-actions">
+          <ActionFeedback action={action} />
+          <Button
+            className="panel-save"
+            disabled={action.pending}
+            onClick={(e) => {
+              if (folder.system) {
+                e.preventDefault();
+                const safe = { ...draft };
+                delete safe.name;
+                delete safe.parentId;
+                delete safe.visibility;
+                void action.run(async () => {
+                  await api(`admin/folders/${folder.id}`, json('PATCH', safe));
+                  await reload();
+                });
               }
-            />
-            {draft.processingPolicy != null && (
-              <ProcessingEditor
-                value={draft.processingPolicy}
-                onChange={(value) => setDraft({ ...draft, processingPolicy: value })}
-              />
-            )}
-            <Field label="描述">
-              <textarea
-                value={draft.description ?? ''}
-                onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-                maxLength={1000}
-              />
-            </Field>
-            <Field label="上级文件夹">
-              <select
-                disabled={!!folder.system}
-                value={draft.parentId ?? ''}
-                onChange={(e) => setDraft({ ...draft, parentId: e.target.value || null })}
-              >
-                <option value="">顶级文件夹</option>
-                <FolderOptions folders={folders} exclude={folder.id} />
-              </select>
-            </Field>
-            <Field label="排序值">
-              <input
-                type="number"
-                value={draft.sortOrder ?? 0}
-                onChange={(e) => setDraft({ ...draft, sortOrder: Number(e.target.value) })}
-              />
-            </Field>
-            <Field label="封面图片 ID（可选）" hint="必须是当前文件夹内未删除图片的 ID。">
-              <input
-                value={draft.coverId ?? ''}
-                onChange={(e) => setDraft({ ...draft, coverId: e.target.value || null })}
-              />
-            </Field>
-          </>
-        )}
-        <Button
-          disabled={action.pending}
-          onClick={(e) => {
-            if (folder.system) {
-              e.preventDefault();
-              const safe = { ...draft };
-              delete safe.name;
-              delete safe.parentId;
-              delete safe.visibility;
-              void action.run(async () => {
-                await api(`admin/folders/${folder.id}`, json('PATCH', safe));
-                await reload();
-              });
-            }
-          }}
-        >
-          保存设置
-        </Button>
-        <ActionFeedback action={action} />
+            }}
+          >
+            保存设置
+          </Button>
+        </footer>
       </form>
       {tab === '设置' && !folder.system && (
         <div className="danger-zone">
@@ -816,92 +946,204 @@ function FolderPanel({ folder, folders, storages, tab, reload, leave }: any) {
     </div>
   );
 }
+const imageDraft = (image: any) => ({
+  name: image.name ?? '',
+  folderId: image.folderId ?? '',
+  visibility: image.visibility ?? 'private',
+  tags: image.tags ?? [],
+  description: image.description ?? '',
+});
+const imageStatus: Record<string, string> = {
+  pending: '处理中',
+  processing: '处理中',
+  completed: '已完成',
+  failed: '失败',
+  skipped: '未启用',
+};
 function ImageEditor({ image, close, folders, reload }: any) {
+  const confirm = useConfirm();
+  const closing = useRef(false);
+  const tagId = useId();
+  const thumbnail = useImageSource(image ?? {}, true);
   const [processing, setProcessing] = useState<any>({ ...processingDefaults, enabled: true });
-  const [draft, setDraft] = useState<any>({}),
-    action = useAction();
+  const [draft, setDraft] = useState<any>({});
+  const [tagInput, setTagInput] = useState('');
+  const [nameEdited, setNameEdited] = useState(false);
+  const generatedName = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(
+    image?.name ?? '',
+  );
+  const action = useAction();
   useEffect(() => {
-    if (image)
-      setDraft({
-        name: image.name,
-        folderId: image.folderId,
-        visibility: image.visibility,
-        tags: image.tags.join(', '),
-        description: image.description,
-      });
+    if (image) {
+      setDraft(imageDraft(image));
+      setTagInput('');
+      setNameEdited(false);
+      setProcessing({ ...processingDefaults, enabled: true });
+    }
   }, [image]);
+  const tagsWith = (value: string) =>
+    Array.from(
+      new Set([
+        ...(draft.tags ?? []),
+        ...value
+          .split(',')
+          .map((tag) => tag.trim())
+          .filter(Boolean),
+      ]),
+    );
+  const addTags = () => {
+    setDraft({ ...draft, tags: tagsWith(tagInput) });
+    setTagInput('');
+  };
+  const dirty =
+    !!image && (JSON.stringify(draft) !== JSON.stringify(imageDraft(image)) || !!tagInput.trim());
+  const requestClose = async () => {
+    if (action.pending || closing.current) return;
+    closing.current = true;
+    try {
+      if (!dirty || (await confirm('修改尚未保存，确认放弃？'))) close();
+    } finally {
+      closing.current = false;
+    }
+  };
   return (
     <Modal
       busy={action.pending}
       open={!!image}
-      onOpenChange={(v) => {
-        if (!v) close();
+      onOpenChange={(open) => {
+        if (!open) void requestClose();
       }}
       title="编辑图片信息"
     >
       {image && (
         <form
+          className="image-editor"
           onSubmit={(e) => {
             e.preventDefault();
             void action.run(async () => {
               await api(
                 `admin/images/${image.id}`,
-                json('PATCH', {
-                  ...draft,
-                  tags: draft.tags
-                    .split(',')
-                    .map((x: string) => x.trim())
-                    .filter(Boolean),
-                }),
+                json('PATCH', { ...draft, tags: tagsWith(tagInput) }),
               );
               await reload();
               close();
             });
           }}
         >
-          <Field label="名称">
-            <input
-              value={draft.name ?? ''}
-              onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-              required
-            />
-          </Field>
-          <Field label="所属文件夹">
-            <select
-              value={draft.folderId ?? ''}
-              onChange={(e) => setDraft({ ...draft, folderId: e.target.value })}
-            >
-              <FolderOptions folders={folders} />
-            </select>
-          </Field>
-          <Field label="自身权限">
-            <select
-              value={draft.visibility ?? 'private'}
-              onChange={(e) => setDraft({ ...draft, visibility: e.target.value })}
-            >
-              <option value="private">私有</option>
-              <option value="public">公开</option>
-            </select>
-          </Field>
-          <Field label="标签（英文逗号分隔）">
-            <input
-              value={draft.tags ?? ''}
-              onChange={(e) => setDraft({ ...draft, tags: e.target.value })}
-            />
-          </Field>
-          <Field label="描述">
-            <textarea
-              value={draft.description ?? ''}
-              onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-            />
-          </Field>
-          <p className="muted">
-            处理：{image.processingStatus} · 分类：{image.classificationStatus}
-          </p>
-          <div className="button-row">
-            <Button type="button" variant="secondary" asChild>
-              <a href={`/api/v1/admin/images/${image.id}/original`}>下载原始文件</a>
-            </Button>
+          <div className="image-editor-fields">
+            <div className="image-editor-preview">
+              <div className="image-editor-thumbnail">
+                {thumbnail.failed ? (
+                  <Images size={24} />
+                ) : (
+                  <img src={thumbnail.source} alt="图片缩略图" onError={thumbnail.onError} />
+                )}
+              </div>
+              <div className="image-editor-facts">
+                <strong>{generatedName ? '图片预览' : image.name}</strong>
+                <small>
+                  {image.width} × {image.height} · {bytes(image.size)} ·{' '}
+                  {image.format?.toUpperCase()}
+                </small>
+              </div>
+              <div className="image-editor-status">
+                {[
+                  ['处理', image.processingStatus],
+                  ['分类', image.classificationStatus],
+                ].map(([label, status]) => (
+                  <span
+                    key={label}
+                    className={
+                      'status-pill ' +
+                      (status === 'completed'
+                        ? 'completed'
+                        : status === 'failed'
+                          ? 'failed'
+                          : status === 'pending' || status === 'processing'
+                            ? 'processing'
+                            : '')
+                    }
+                  >
+                    <i aria-hidden="true" />
+                    {label} · {imageStatus[status] ?? status}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <h4 className="form-section">归属与权限</h4>
+            <div className="form-grid">
+              <Field label="所属文件夹">
+                <select
+                  value={draft.folderId ?? ''}
+                  onChange={(e) => setDraft({ ...draft, folderId: e.target.value })}
+                >
+                  <FolderOptions folders={folders} />
+                </select>
+              </Field>
+              <Field label="自身权限">
+                <select
+                  value={draft.visibility ?? 'private'}
+                  onChange={(e) => setDraft({ ...draft, visibility: e.target.value })}
+                >
+                  <option value="private">私有</option>
+                  <option value="public">公开</option>
+                </select>
+              </Field>
+            </div>
+            <h4 className="form-section">内容</h4>
+            <Field label="名称">
+              <input
+                required={!generatedName || nameEdited}
+                placeholder={generatedName ? '未命名' : undefined}
+                title={image.name}
+                value={generatedName && !nameEdited ? '' : (draft.name ?? '')}
+                onChange={(e) => {
+                  setNameEdited(true);
+                  setDraft({ ...draft, name: e.target.value });
+                }}
+              />
+            </Field>
+            <div className="field">
+              <label htmlFor={tagId}>标签</label>
+              <div className="image-tag-input">
+                {(draft.tags ?? []).map((tag: string) => (
+                  <span className="image-tag" key={tag}>
+                    {tag}
+                    <button
+                      type="button"
+                      aria-label={`删除标签 ${tag}`}
+                      onClick={() =>
+                        setDraft({
+                          ...draft,
+                          tags: draft.tags.filter((value: string) => value !== tag),
+                        })
+                      }
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
+                <input
+                  id={tagId}
+                  value={tagInput}
+                  placeholder="输入标签，按回车或逗号添加"
+                  onChange={(e) => setTagInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (!e.nativeEvent.isComposing && (e.key === 'Enter' || e.key === ',')) {
+                      e.preventDefault();
+                      addTags();
+                    }
+                  }}
+                />
+              </div>
+            </div>
+            <Field label="描述">
+              <textarea
+                value={draft.description ?? ''}
+                onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+              />
+            </Field>
             {image.publicationHold && (
               <Button
                 type="button"
@@ -917,41 +1159,68 @@ function ImageEditor({ image, close, folders, reload }: any) {
                 {image.state === 'processing' ? '使用原图并结束处理' : '使用当前版本并结束整理'}
               </Button>
             )}
+
+            {image.state === 'missing' && (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() =>
+                  void action.run(async () => {
+                    await api(`admin/images/${image.id}/check`, json('POST'));
+                    await reload();
+                  }, '文件已恢复可用')
+                }
+              >
+                检查并恢复文件
+              </Button>
+            )}
+
+            <ActionFeedback action={action} />
           </div>
-          <details>
-            <summary>重新处理图片</summary>
-            <ProcessingEditor value={processing} onChange={setProcessing} />
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={action.pending || !processing.enabled}
-              onClick={() =>
-                void action.run(async () => {
-                  await api(`admin/images/${image.id}/reprocess`, json('POST', { processing }));
-                  await reload();
-                }, '已提交处理任务，当前可用版本保持可访问')
-              }
-            >
-              提交处理任务
-            </Button>
-          </details>
-          <p className="muted">图片 ID：{image.id}</p>
-          {image.state === 'missing' && (
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() =>
-                void action.run(async () => {
-                  await api(`admin/images/${image.id}/check`, json('POST'));
-                  await reload();
-                }, '文件已恢复可用')
-              }
-            >
-              检查并恢复文件
-            </Button>
-          )}
-          <Button disabled={action.pending}>{action.pending ? '正在提交…' : '保存信息'}</Button>
-          <ActionFeedback action={action} />
+          <footer className="image-editor-footer">
+            <div className="image-editor-tools">
+              <details className="image-technical">
+                <summary>技术信息</summary>
+                <p className="muted">图片 ID：{image.id}</p>
+              </details>
+              <Button type="button" variant="ghost" asChild>
+                <a href={`/api/v1/admin/images/${image.id}/original`}>下载原始文件</a>
+              </Button>
+              <details className="image-reprocess">
+                <summary>重新处理图片</summary>
+                <div className="image-reprocess-panel">
+                  <ProcessingEditor value={processing} onChange={setProcessing} />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={action.pending || !processing.enabled}
+                    onClick={() =>
+                      void action.run(async () => {
+                        await api(
+                          `admin/images/${image.id}/reprocess`,
+                          json('POST', { processing }),
+                        );
+                        await reload();
+                      }, '已提交处理任务，当前可用版本保持可访问')
+                    }
+                  >
+                    提交处理任务
+                  </Button>
+                </div>
+              </details>
+            </div>
+            <div className="image-editor-save">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={action.pending}
+                onClick={() => void requestClose()}
+              >
+                取消
+              </Button>
+              <Button disabled={action.pending}>{action.pending ? '正在提交…' : '保存信息'}</Button>
+            </div>
+          </footer>
         </form>
       )}
     </Modal>
@@ -973,69 +1242,293 @@ function UploadModal({ open, close, folders, current, reload }: any) {
 }
 export function Trash() {
   const confirm = useConfirm();
-  const [page, setPage] = useState(1),
-    { data, error, loading, reload, refreshError, refreshing } = useData(
-      `admin/images?trash=true&page=${page}`,
-    ),
-    action = useAction();
+  const notice = useNotice();
+  const [page, setPage] = useState(1);
+  const { data, error, loading, reload, refreshError, refreshing } = useData(
+    `admin/images?trash=true&page=${page}`,
+  );
+  const folders = useData('admin/folders');
+  const action = useAction();
+  const [selected, setSelected] = useState<string[]>([]);
+  const [preview, setPreview] = useState<any>();
+  const [clearProgress, setClearProgress] = useState<{ done: number; total: number }>();
+  const selectAll = useRef<HTMLInputElement>(null);
+  const items: any[] = data?.items ?? [];
+  const eligible = items.filter((image) => image.state !== 'purging');
+  const selectedItems = items.filter((image) => selected.includes(image.id));
+  const selectedSize = selectedItems.reduce((size, image) => size + image.size, 0);
+  const allSelected = eligible.length > 0 && eligible.every((image) => selected.includes(image.id));
+  const busy = action.pending || !!clearProgress;
+  useEffect(() => {
+    setSelected([]);
+  }, [page, data]);
+  useEffect(() => {
+    if (selectAll.current) selectAll.current.indeterminate = selected.length > 0 && !allSelected;
+  }, [selected.length, allSelected, data]);
+  useEffect(() => {
+    if (data && page > Math.max(1, Math.ceil(data.total / 40)))
+      setPage(Math.max(1, Math.ceil(data.total / 40)));
+  }, [data, page]);
+  const refresh = async () => {
+    setSelected([]);
+    await reload();
+  };
+  const relativeTime = (ts: number) => {
+    const now = new Date(),
+      date = new Date(ts);
+    const minutes = Math.max(0, Math.floor((now.getTime() - date.getTime()) / 60000));
+    if (minutes < 1) return '刚刚';
+    if (minutes < 60) return `${minutes} 分钟前`;
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const day = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+    const days = Math.round((today - day) / 86400000);
+    if (days === 1) return '昨天';
+    if (days > 1) return `${days} 天前`;
+    return `${Math.floor(minutes / 60)} 小时前`;
+  };
+  const folderName = (image: any) => {
+    if (!image.folderId || image.folderId === 'uncategorized') return '未分类';
+    if (folders.loading) return '加载中…';
+    if (folders.error) return '文件夹信息不可用';
+    return (
+      folders.data?.items.find((folder: any) => folder.id === image.folderId)?.name ??
+      '已删除的文件夹'
+    );
+  };
+  const trashImage = (image: any) => {
+    const url = `/api/v1/admin/images/${image.id}/trash-preview`;
+    return {
+      ...image,
+      name: image.name,
+      url,
+      logicalUrl: url,
+      thumbnailUrl: url + '?thumbnail=true',
+      logicalThumbnailUrl: url + '?thumbnail=true',
+      thumbnailState: 'ready',
+      urlExpiresAt: undefined,
+      thumbnailUrlExpiresAt: undefined,
+    };
+  };
+  const batch = async (permanent: boolean) => {
+    const count = selected.length;
+    const message = permanent
+      ? `彻底删除 ${count} 张图片（合计 ${bytes(selectedSize)}）后无法恢复，确认删除？`
+      : `恢复 ${count} 张图片？恢复前请确认目标文件夹权限。`;
+    if (!(await confirm(message))) return;
+    void action.run(
+      async () => {
+        const receipt = await api(
+          'admin/images/batch',
+          json('POST', { ids: selected, action: permanent ? 'permanent' : 'restore' }),
+        );
+        await refresh();
+        if (permanent)
+          notice(
+            `已安排彻底删除 ${count - (receipt.skipped ?? 0)} 张${receipt.skipped ? `，跳过 ${receipt.skipped} 张不在回收站或已不存在的图片` : ''}`,
+          );
+      },
+      permanent ? '' : `已恢复 ${count} 张`,
+    );
+  };
+  const emptyTrash = async () => {
+    if (
+      !data ||
+      !(await confirm(
+        `将彻底删除回收站内全部 ${data.total} 张图片（合计 ${bytes(data.totalSize)}），此操作无法撤销。`,
+      ))
+    )
+      return;
+    void action.run(async () => {
+      let total = data.total,
+        done = 0,
+        previousTotal = total,
+        lastProgress = Date.now();
+      setClearProgress({ done, total });
+      setSelected([]);
+      try {
+        for (;;) {
+          let list = await api('admin/images?trash=true&page=1&limit=100');
+          if (list.total < previousTotal) lastProgress = Date.now();
+          total = Math.max(total, done + list.total);
+          done = Math.max(done, total - list.total);
+          previousTotal = list.total;
+          setClearProgress({ done, total });
+          if (list.total === 0) break;
+          let ids = list.items
+            .filter((image: any) => image.state !== 'purging')
+            .map((image: any) => image.id);
+          for (let nextPage = 2; !ids.length && (nextPage - 1) * 100 < list.total; nextPage++) {
+            list = await api(`admin/images?trash=true&page=${nextPage}&limit=100`);
+            ids = list.items
+              .filter((image: any) => image.state !== 'purging')
+              .map((image: any) => image.id);
+          }
+          if (ids.length) {
+            const receipt = await api(
+              'admin/images/batch',
+              json('POST', { ids, action: 'permanent' }),
+            );
+            if ((receipt.skipped ?? 0) < ids.length) lastProgress = Date.now();
+            await refresh();
+          }
+          if (Date.now() - lastProgress > 120000)
+            throw new Error('删除任务已提交，但仍有图片未完成删除。请稍后刷新回收站。');
+          if (!ids.length) {
+            await refresh();
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
+        }
+      } finally {
+        await refresh();
+        setClearProgress(undefined);
+      }
+    }, '已清空回收站');
+  };
   return (
-    <>
+    <div className="trash-page">
       <PageHeading
         title="回收站"
-        description="删除后即停止对外提供访问。恢复前，请确认当前文件夹权限。"
+        description="删除后即停止对外提供访问，但继续占用存储。恢复前请确认目标文件夹权限。"
       />
-      <QueryFeedback query={{ error: refreshError, refreshing, reload }} />
+      <QueryFeedback query={{ error: refreshError, refreshing, reload: refresh }} />
+      <ActionFeedback action={action} />
+      {!!items.length && data?.total != null && data?.totalSize != null && data.total > 0 && (
+        <div className="trash-summary">
+          <span>
+            共 {data.total} 张 · 合计 {bytes(data.totalSize)} · 不会自动清理，需手动彻底删除
+          </span>
+          <Button variant="ghost" disabled={busy} onClick={() => void emptyTrash()}>
+            {clearProgress ? `正在删除 ${clearProgress.done}/${clearProgress.total}` : '清空回收站'}
+          </Button>
+        </div>
+      )}
+      {selected.length > 0 && (
+        <div className="selection-bar">
+          <span>已选 {selected.length} 张</span>
+          <Button
+            variant="secondary"
+            disabled={busy || selected.length > 100}
+            onClick={() => void batch(false)}
+          >
+            恢复
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={busy || selected.length > 100}
+            onClick={() => void batch(true)}
+          >
+            彻底删除
+          </Button>
+          <Button
+            className="trash-clear-selection"
+            variant="ghost"
+            disabled={busy}
+            onClick={() => setSelected([])}
+          >
+            取消选择
+          </Button>
+        </div>
+      )}
       {loading ? (
         <Busy />
       ) : error ? (
-        <QueryFeedback query={{ error, reload }} />
-      ) : data?.items.length ? (
+        <QueryFeedback query={{ error, reload: refresh }} />
+      ) : items.length ? (
         <div className="panel table-wrap">
-          <table>
+          <table className="trash-table">
             <thead>
               <tr>
+                <th>
+                  <input
+                    ref={selectAll}
+                    type="checkbox"
+                    aria-label="全选本页回收站图片"
+                    checked={allSelected}
+                    disabled={busy || !eligible.length}
+                    onChange={(e) =>
+                      setSelected(e.target.checked ? eligible.map((image) => image.id) : [])
+                    }
+                  />
+                </th>
                 <th>图片</th>
+                <th>原文件夹</th>
                 <th>大小</th>
                 <th>删除时间</th>
                 <th>操作</th>
               </tr>
             </thead>
             <tbody>
-              {data.items.map((i: any) => (
-                <tr key={i.id}>
+              {items.map((image) => (
+                <tr key={image.id} className={image.state === 'purging' ? 'purging' : ''}>
                   <td>
-                    <strong>{i.name}</strong>
-                    <small>{i.id}</small>
+                    <input
+                      type="checkbox"
+                      aria-label={`选择 ${image.name}`}
+                      disabled={busy || image.state === 'purging'}
+                      checked={selected.includes(image.id)}
+                      onChange={(e) =>
+                        setSelected((current) =>
+                          e.target.checked
+                            ? [...current, image.id]
+                            : current.filter((id) => id !== image.id),
+                        )
+                      }
+                    />
                   </td>
-                  <td>{bytes(i.size)}</td>
-                  <td>{new Date(i.deletedAt).toLocaleString('zh-CN')}</td>
+                  <td>
+                    <div className="trash-image">
+                      <div className="trash-thumbnail">
+                        <Thumbnail
+                          image={{ ...trashImage(image), width: 1, height: 1 }}
+                          disabled={image.state === 'purging'}
+                          actionLabel={`预览 ${image.name}`}
+                          onClick={() => setPreview(trashImage(image))}
+                        />
+                      </div>
+                      <div className="trash-name">
+                        <strong title={image.name}>{image.name}</strong>
+                        {image.state === 'purging' && <span className="badge">正在删除</span>}
+                      </div>
+                    </div>
+                  </td>
+                  <td>{folderName(image)}</td>
+                  <td>{bytes(image.size)}</td>
+                  <td title={new Date(image.deletedAt).toLocaleString('zh-CN')}>
+                    {relativeTime(image.deletedAt)}
+                  </td>
                   <td>
                     <div className="button-row">
                       <Button
-                        variant="secondary"
-                        disabled={action.pending || i.state === 'purging'}
+                        variant="ghost"
+                        disabled={action.pending || image.state === 'purging'}
                         onClick={() =>
                           void action.run(async () => {
-                            await api(`admin/images/${i.id}/restore`, json('POST'));
-                            await reload();
+                            await api(`admin/images/${image.id}/restore`, json('POST'));
+                            await refresh();
                           }, '已恢复')
                         }
                       >
                         恢复
                       </Button>
-                      <Button
-                        variant="destructive"
-                        disabled={action.pending || i.state === 'purging'}
+                      <button
+                        className="icon-button trash-permanent"
+                        aria-label="彻底删除"
+                        title="彻底删除"
+                        disabled={action.pending || image.state === 'purging'}
                         onClick={async () => {
-                          if (await confirm(`彻底删除图片“${i.name}”后无法恢复，确认删除？`))
+                          if (
+                            await confirm(
+                              `彻底删除图片“${image.name}”（${bytes(image.size)}）后无法恢复，确认删除？`,
+                            )
+                          )
                             void action.run(async () => {
-                              await api(`admin/images/${i.id}/permanent`, json('DELETE'));
-                              await reload();
+                              await api(`admin/images/${image.id}/permanent`, json('DELETE'));
+                              await refresh();
                             }, '已安排彻底删除');
                         }}
                       >
-                        {i.state === 'purging' ? '正在删除' : '彻底删除'}
-                      </Button>
+                        <Trash2 size={16} />
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -1048,21 +1541,17 @@ export function Trash() {
           <Trash2 size={36} />
           <h3>回收站是空的。</h3>
           <p>删除的图片会先保留在这里。</p>
+          <Button asChild variant="secondary">
+            <Link to="/admin/folders">去资源文件夹</Link>
+          </Button>
         </div>
       )}
-      <div className="pagination">
-        <Button variant="secondary" disabled={page === 1} onClick={() => setPage(page - 1)}>
-          上一页
-        </Button>
-        <span>第 {page} 页</span>
-        <Button
-          variant="secondary"
-          disabled={!data || page * 40 >= data.total}
-          onClick={() => setPage(page + 1)}
-        >
-          下一页
-        </Button>
-      </div>
-    </>
+      {(data?.total ?? 0) > 40 && (
+        <fieldset className="trash-pagination" disabled={busy}>
+          <Pagination total={data.total} page={page} onChange={setPage} />
+        </fieldset>
+      )}
+      <Preview image={preview} close={() => setPreview(undefined)} />
+    </div>
   );
 }

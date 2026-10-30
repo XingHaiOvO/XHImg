@@ -25,6 +25,42 @@ export const Button = React.forwardRef<
   const Comp = asChild ? Slot : 'button';
   return <Comp className={cn(variants({ variant }), className)} ref={ref} {...props} />;
 });
+export function Pagination({
+  total,
+  page,
+  pageSize = 40,
+  onChange,
+}: {
+  total: number;
+  page: number;
+  pageSize?: number;
+  onChange: (page: number) => void;
+}) {
+  if (total <= pageSize) return null;
+  return (
+    <nav className="pagination" aria-label="分页">
+      <Button
+        type="button"
+        variant="secondary"
+        disabled={page === 1}
+        onClick={() => onChange(page - 1)}
+      >
+        上一页
+      </Button>
+      <span>
+        第 {page} / {Math.ceil(total / pageSize)} 页
+      </span>
+      <Button
+        type="button"
+        variant="secondary"
+        disabled={page * pageSize >= total}
+        onClick={() => onChange(page + 1)}
+      >
+        下一页
+      </Button>
+    </nav>
+  );
+}
 export function Modal({
   open,
   onOpenChange,

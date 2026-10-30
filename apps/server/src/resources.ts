@@ -1,9 +1,9 @@
-import { imageResponse } from './image-urls.js';
+import { imageResponse, sameImageLocation } from './image-urls.js';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { Context, params, query, paging, name, visibility } from './context.js';
 import { fail, id } from './security.js';
-import { s3ConfigSchema } from './storage.js';
+import { ObjectMissing, s3ConfigSchema } from './storage.js';
 import { policyPatch } from './policies.js';
 import { migrationStorageUsed, assertNotMigrating } from './migrations.js';
 
@@ -218,6 +218,13 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
       total: ctx.db.one(`SELECT COUNT(*) n FROM images WHERE ${where}`, ...args)!.n,
       page: p.page,
       limit: p.limit,
+      ...(q.trash === 'true' && !publicOnly && actor.type === 'admin'
+        ? {
+            totalSize: ctx.db.one(
+              'SELECT COALESCE(SUM(size),0) AS n FROM images WHERE deleted_at IS NOT NULL',
+            )!.n,
+          }
+        : {}),
     };
   };
   app.get('/api/v1/admin/images', async (req) => listImages(req));
@@ -275,17 +282,42 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
     const b = z
       .object({
         ids: z.array(z.string()).min(1).max(100),
-        action: z.enum(['delete', 'restore', 'move', 'visibility']),
+        action: z.enum(['delete', 'restore', 'move', 'visibility', 'permanent']),
         folderId: z.string().optional(),
         visibility: visibility.optional(),
       })
       .parse(req.body);
     if (b.action === 'move') ctx.folder(z.string().parse(b.folderId));
     if (b.action === 'visibility') visibility.parse(b.visibility);
+    let skipped = 0;
+    const purging: string[] = [];
     ctx.db.tx(() => {
-      for (const imageId of b.ids) {
-        const img = ctx.image(imageId);
+      for (const imageId of b.action === 'permanent' ? new Set(b.ids) : b.ids) {
+        const img =
+          b.action === 'permanent'
+            ? ctx.db.one('SELECT * FROM images WHERE id=?', imageId)
+            : ctx.image(imageId);
+        if (!img) {
+          skipped++;
+          continue;
+        }
         if (img.state === 'purging') fail(409, 'PURGING', '图片正在彻底删除');
+        if (b.action === 'permanent') {
+          if (!img.deleted_at) {
+            skipped++;
+            continue;
+          }
+          ctx.db.run("UPDATE images SET state='purging' WHERE id=?", imageId);
+          if (!ctx.db.one("SELECT id FROM jobs WHERE image_id=? AND kind='purge'", imageId))
+            ctx.db.run(
+              'INSERT INTO jobs (id,image_id,kind,created_at) VALUES (?,?,?,?)',
+              id('job'),
+              imageId,
+              'purge',
+              Date.now(),
+            );
+          purging.push(imageId);
+        }
         if (b.action === 'delete')
           ctx.db.run('UPDATE images SET deleted_at=? WHERE id=?', Date.now(), imageId);
         if (b.action === 'restore')
@@ -310,8 +342,42 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
       ctx.access.refresh();
     });
     if (b.action === 'delete') for (const imageId of b.ids) ctx.migrationControl?.image(imageId);
+    for (const imageId of purging) ctx.migrationControl?.image(imageId);
     ctx.invalidate();
-    return { ok: true };
+    return b.action === 'permanent' ? { ok: true, skipped } : { ok: true };
+  });
+  app.get('/api/v1/admin/images/:id/trash-preview', async (req, reply) => {
+    ctx.admin(req);
+    const image = ctx.image(params(req).id!);
+    if (!image.deleted_at || image.state === 'purging') fail(404, 'NOT_FOUND', '回收站图片不可用');
+    let thumbnail = query(req).thumbnail === 'true' && image.thumbnail_state === 'ready';
+    try {
+      const storage = ctx.storage.byId(image.storage_id);
+      const object = await storage
+        .get(thumbnail ? image.thumb_key : image.object_key)
+        .catch((error) => {
+          if (!(error instanceof ObjectMissing) || !thumbnail) throw error;
+          thumbnail = false;
+          return storage.get(image.object_key);
+        });
+      try {
+        ctx.admin(req);
+        if (!sameImageLocation(image, ctx.image(image.id)))
+          fail(409, 'IMAGE_CHANGED', '图片状态已变化，请重试');
+      } catch (error) {
+        object.stream.destroy();
+        throw error;
+      }
+      return reply
+        .header('Cache-Control', 'private, no-store')
+        .header('Content-Type', thumbnail ? 'image/webp' : image.mime)
+        .header('Content-Length', object.size)
+        .header('Content-Disposition', 'inline')
+        .send(object.stream);
+    } catch (error) {
+      if (error instanceof ObjectMissing) fail(404, 'OBJECT_MISSING', '文件暂时不可用');
+      throw error;
+    }
   });
   app.delete('/api/v1/admin/images/:id', async (req) => {
     const image = ctx.image(params(req).id!);

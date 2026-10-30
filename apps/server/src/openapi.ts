@@ -161,7 +161,7 @@ const bodies: Record<string, any> = {
   'post /api/v1/admin/images/batch': object(
     {
       ids: { type: 'array', items: string, minItems: 1, maxItems: 100 },
-      action: { type: 'string', enum: ['delete', 'restore', 'move', 'visibility'] },
+      action: { type: 'string', enum: ['delete', 'restore', 'move', 'visibility', 'permanent'] },
       folderId: string,
       visibility: vis,
     },
@@ -212,6 +212,87 @@ const bodies: Record<string, any> = {
     ['title', 'description', 'allowedOrigins'],
   ),
 };
+const responses: Record<string, any> = {
+  'post /api/v1/admin/images/batch': {
+    '200': {
+      description:
+        '批量操作成功；permanent只处理回收站图片，非回收站或不存在的ID计入skipped，已在删除中的图片返回409。',
+      content: {
+        'application/json': {
+          schema: object(
+            {
+              ok: { type: 'boolean' },
+              skipped: { type: 'integer', minimum: 0, description: '仅permanent返回的跳过数量。' },
+            },
+            ['ok'],
+          ),
+        },
+      },
+    },
+  },
+  'get /api/v1/admin/images': {
+    '200': {
+      description:
+        '管理员图片列表；仅trash=true返回整个回收站的totalSize，包含正在删除的图片，不包含已被物理删除的记录。',
+      content: {
+        'application/json': {
+          schema: object(
+            {
+              items: { type: 'array', items: { type: 'object' } },
+              total: { type: 'integer' },
+              page: { type: 'integer' },
+              limit: { type: 'integer' },
+              totalSize: {
+                type: 'integer',
+                minimum: 0,
+                description: '回收站图片当前版本的合计字节数；仅trash=true返回。',
+              },
+            },
+            ['items', 'total', 'page', 'limit'],
+          ),
+        },
+      },
+    },
+  },
+  'get /api/v1/admin/images/{id}/trash-preview': {
+    '200': {
+      description:
+        '仅管理员读取回收站中的图片；thumbnail=true优先返回缩略图，未就绪时返回当前图片；private, no-store。',
+      content: { 'image/*': { schema: { type: 'string', format: 'binary' } } },
+    },
+  },
+
+  'get /api/v1/admin/classification/stats': {
+    '200': {
+      description:
+        '未删除图片的七种整理状态计数；缺失状态为0，total排除skipped，与列表status=all一致。',
+      content: {
+        'application/json': {
+          schema: object(
+            {
+              counts: object(
+                Object.fromEntries(
+                  [
+                    'pending',
+                    'running',
+                    'completed',
+                    'unmatched',
+                    'failed',
+                    'canceled',
+                    'skipped',
+                  ].map((status) => [status, { type: 'integer', minimum: 0 }]),
+                ),
+                ['pending', 'running', 'completed', 'unmatched', 'failed', 'canceled', 'skipped'],
+              ),
+              total: { type: 'integer', minimum: 0 },
+            },
+            ['counts', 'total'],
+          ),
+        },
+      },
+    },
+  },
+};
 const parameter = (name: string, schema: any, description = '') => ({
   name,
   in: 'query',
@@ -241,9 +322,15 @@ export function documentedApi(app: FastifyInstance) {
     for (const [method, op] of Object.entries(methods) as [string, any][]) {
       if (!['get', 'post', 'put', 'patch', 'delete', 'head'].includes(method)) continue;
       const body = bodies[`${method} ${path}`];
+      const response = responses[`${method} ${path}`];
+      if (response) op.responses = response;
       if (body)
         op.requestBody = { required: true, content: { 'application/json': { schema: body } } };
       const parameters: any[] = [...(op.parameters ?? [])];
+      if (method === 'get' && path.endsWith('/trash-preview'))
+        parameters.push(
+          parameter('thumbnail', boolean, '优先读取缩略图；缺少缩略图时读取当前图片。'),
+        );
       if (method === 'get' && /\/images$/.test(path)) {
         parameters.push(
           parameter('page', { type: 'integer', minimum: 1, default: 1 }),

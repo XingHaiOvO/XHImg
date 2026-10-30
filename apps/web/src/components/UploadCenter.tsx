@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useId } from 'react';
 import { Upload as TusUpload } from 'tus-js-client';
 import { Upload, Pause, Play, X } from 'lucide-react';
 import { api, json, useData, useNotice, csrfToken, bytes } from '../api';
@@ -39,15 +39,21 @@ const labels: Record<string, string> = {
 };
 export function UploadCenter({
   folders,
+  panel = false,
   current = '',
   onComplete = () => {},
   onBusy = () => {},
 }: {
   folders: any[];
+  panel?: boolean;
   current?: string;
   onComplete?: () => void | Promise<void>;
   onBusy?: (busy: boolean) => void;
 }) {
+  const destinationId = useId();
+  const dragDepth = useRef(0);
+  const [dragging, setDragging] = useState(false);
+  const [editingDestination, setEditingDestination] = useState(false);
   const [folder, setFolder] = useState(current),
     [visibility, setVisibility] = useState('private'),
     [inherit, setInherit] = useState(true),
@@ -260,10 +266,61 @@ export function UploadCenter({
     }
   };
   return (
-    <div className="upload-center">
-      <div className="form-grid">
+    <div className={panel ? 'upload-center panel' : 'upload-center'}>
+      <button
+        type="button"
+        className={'dropzone' + (dragging ? ' dragging' : '')}
+        onClick={() => input.current?.click()}
+        onDragEnter={(e) => {
+          e.preventDefault();
+          dragDepth.current++;
+          setDragging(true);
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+        }}
+        onDragLeave={() => {
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (!dragDepth.current) setDragging(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          dragDepth.current = 0;
+          setDragging(false);
+          void add(Array.from(e.dataTransfer.files));
+        }}
+      >
+        <Upload size={28} />
+        <strong>拖入图片，或点击选择</strong>
+        <span>JPG、PNG、WebP · 每张最多 {config.data?.maxUploadMB ?? 100}MB · 支持暂停与续传</span>
+      </button>
+      <div className="upload-destination-summary">
+        <span role="group" aria-label="目标文件夹">
+          将上传到「{folders.find((item) => item.id === folder)?.name ?? '未分类'}」
+        </span>
+        <span aria-hidden="true">·</span>
+        <span role="group" aria-label="图片自身权限">
+          {visibility === 'public' ? '公开' : '私有'}
+        </span>
+        <Button
+          type="button"
+          className="text-link"
+          variant="ghost"
+          aria-expanded={editingDestination}
+          aria-controls={destinationId}
+          onClick={() => setEditingDestination(!editingDestination)}
+        >
+          {editingDestination ? '收起' : '修改'}
+        </Button>
+      </div>
+      <div className="form-grid" id={destinationId} hidden={!editingDestination}>
         <Field label="目标文件夹">
-          <select value={folder} onChange={(e) => setFolder(e.target.value)}>
+          <select
+            aria-label="目标文件夹"
+            value={folder}
+            onChange={(e) => setFolder(e.target.value)}
+          >
             <option value="">未分类（可自动整理）</option>
             {folders.map((f) => (
               <option key={f.id} value={f.id}>
@@ -273,14 +330,30 @@ export function UploadCenter({
           </select>
         </Field>
         <Field label="图片自身权限">
-          <select value={visibility} onChange={(e) => setVisibility(e.target.value)}>
+          <select
+            aria-label="图片自身权限"
+            value={visibility}
+            onChange={(e) => setVisibility(e.target.value)}
+          >
             <option value="private">私有</option>
             <option value="public">公开（仍受父文件夹限制）</option>
           </select>
         </Field>
       </div>
-      <details>
-        <summary>处理与分类选项</summary>
+      <details className="upload-policy">
+        <summary>
+          <span className="upload-policy-chevron" aria-hidden="true">
+            ▸
+          </span>
+          <span>处理与分类选项</span>
+          <small>
+            {inherit
+              ? '跟随文件夹 / 系统策略'
+              : !policy.enabled
+                ? '保持原图 · 不处理'
+                : `${policy.targetFormat === 'keep' ? '保持原格式' : policy.targetFormat.toUpperCase()} · ${policy.compress && policy.targetFormat !== 'png' ? `质量 ${policy.quality}` : '无损处理'}`}
+          </small>
+        </summary>
         <Check
           label="使用文件夹 / 系统默认处理策略"
           checked={inherit}
@@ -323,99 +396,83 @@ export function UploadCenter({
           e.target.value = '';
         }}
       />
-      <button
-        type="button"
-        className="dropzone"
-        onClick={() => input.current?.click()}
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => {
-          e.preventDefault();
-          void add(Array.from(e.dataTransfer.files));
-        }}
-      >
-        <Upload size={28} />
-        <strong>拖入图片，或点击选择</strong>
-        <span>JPG、PNG、WebP · 每张最多 {config.data?.maxUploadMB ?? 100}MB · 支持暂停与续传</span>
-      </button>
-      {entries.length > 0 && (
-        <div className="upload-queue" aria-live="polite">
-          {entries.map((entry) => (
-            <div key={entry.id}>
-              <strong>{entry.name}</strong>
-              <span>{entry.status}</span>
-              <progress value={entry.progress} max="100" aria-label={`${entry.name} 上传进度`} />
-              <div className="button-row">
-                {entry.state === 'uploading' && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => {
-                      update(entry, { state: 'paused', status: '已暂停' });
-                      void entry.task?.abort();
-                    }}
-                  >
-                    <Pause size={14} />
-                    暂停
-                  </Button>
-                )}
-                {entry.state === 'paused' && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => {
-                      if (entry.file && entry.record)
-                        startTransfer(entry, entry.file, entry.record);
-                    }}
-                  >
-                    <Play size={14} />
-                    继续
-                  </Button>
-                )}
-                {entry.state === 'failed' && entry.record && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => {
-                      void api(`uploads/${entry.record!.url.split('/').pop()}`, {
-                        signal: entry.controller?.signal,
+
+      <div className={'upload-queue' + (!entries.length ? ' is-empty' : '')} aria-live="polite">
+        {!entries.length && (
+          <p className="muted upload-queue-empty">暂无上传任务，选择图片后将在这里显示进度。</p>
+        )}
+        {entries.map((entry) => (
+          <div key={entry.id}>
+            <strong>{entry.name}</strong>
+            <span>{entry.status}</span>
+            <progress value={entry.progress} max="100" aria-label={`${entry.name} 上传进度`} />
+            <div className="button-row">
+              {entry.state === 'uploading' && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    update(entry, { state: 'paused', status: '已暂停' });
+                    void entry.task?.abort();
+                  }}
+                >
+                  <Pause size={14} />
+                  暂停
+                </Button>
+              )}
+              {entry.state === 'paused' && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    if (entry.file && entry.record) startTransfer(entry, entry.file, entry.record);
+                  }}
+                >
+                  <Play size={14} />
+                  继续
+                </Button>
+              )}
+              {entry.state === 'failed' && entry.record && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    void api(`uploads/${entry.record!.url.split('/').pop()}`, {
+                      signal: entry.controller?.signal,
+                    })
+                      .then((receipt) => {
+                        if (!mounted.current || entry.state === 'canceled') return;
+                        if (receipt.state === 'failed') {
+                          return api(`uploads/${receipt.uploadId}/retry`, json('POST')).then(() => {
+                            if (!mounted.current || entry.state === 'canceled') return;
+                            update(entry, {
+                              state: 'validating',
+                              status: '正在重试',
+                              error: undefined,
+                            });
+                            void watch(entry);
+                          });
+                        } else if (entry.file && entry.record)
+                          startTransfer(entry, entry.file, entry.record);
                       })
-                        .then((receipt) => {
-                          if (!mounted.current || entry.state === 'canceled') return;
-                          if (receipt.state === 'failed') {
-                            return api(`uploads/${receipt.uploadId}/retry`, json('POST')).then(
-                              () => {
-                                if (!mounted.current || entry.state === 'canceled') return;
-                                update(entry, {
-                                  state: 'validating',
-                                  status: '正在重试',
-                                  error: undefined,
-                                });
-                                void watch(entry);
-                              },
-                            );
-                          } else if (entry.file && entry.record)
-                            startTransfer(entry, entry.file, entry.record);
-                        })
-                        .catch((e) => {
-                          if (mounted.current && entry.state !== 'canceled')
-                            notice(e.message, true);
-                        });
-                    }}
-                  >
-                    重试
-                  </Button>
-                )}
-                {!['ready', 'canceled'].includes(entry.state) && (
-                  <Button type="button" variant="ghost" onClick={() => void cancel(entry)}>
-                    <X size={14} />
-                    取消
-                  </Button>
-                )}
-              </div>
+                      .catch((e) => {
+                        if (mounted.current && entry.state !== 'canceled') notice(e.message, true);
+                      });
+                  }}
+                >
+                  重试
+                </Button>
+              )}
+              {!['ready', 'canceled'].includes(entry.state) && (
+                <Button type="button" variant="ghost" onClick={() => void cancel(entry)}>
+                  <X size={14} />
+                  取消
+                </Button>
+              )}
             </div>
-          ))}
-        </div>
-      )}
+          </div>
+        ))}
+      </div>
       {saved.filter((record) => !entries.some((e) => e.record?.url === record.url)).length > 0 && (
         <section className="resume-list">
           <h3>可恢复的上传</h3>
