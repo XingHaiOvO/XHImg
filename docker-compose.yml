@@ -1,13 +1,14 @@
 services:
   xhimg:
     build: .
+    init: true
     ports:
       - '9521:9521'
     environment:
-      MASTER_KEY: ${MASTER_KEY:?Set a persistent 64-character hex MASTER_KEY in .env}
-      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:9521}
-      COOKIE_SECURE: ${COOKIE_SECURE:-false}
-      TRUST_PROXY: ${TRUST_PROXY:-false}
+      MASTER_KEY: '${MASTER_KEY:?Set a persistent 64-character hex MASTER_KEY in .env}'
+      PUBLIC_URL: '${PUBLIC_URL:-http://localhost:9521}'
+      COOKIE_SECURE: '${COOKIE_SECURE:-false}'
+      TRUST_PROXY: '${TRUST_PROXY:-false}'
     volumes:
       - xhimg-data:/app/data
     restart: unless-stopped

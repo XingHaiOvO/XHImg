@@ -2,7 +2,9 @@
 **/dist
 .cache
 data
-.env
+**/.env
+**/.env.*
+**/*.log
 .git
 test-results
 playwright-report

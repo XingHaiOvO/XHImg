@@ -1308,7 +1308,7 @@ html[data-theme='dark'] .docs-page .tok-method {
 }
 .recent-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 18px;
 }
 .recent-grid .image-thumb {
@@ -4511,6 +4511,9 @@ html[data-theme='dark'] .trash-table .trash-permanent:hover:not(:disabled) {
 .overview-metrics {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
+.overview-metrics .metrics-pair {
+  display: inline;
+}
 :root[data-theme='dark'] .overview-alert {
   background: #2a2113;
   color: #e8c07a;
@@ -4557,17 +4560,9 @@ html[data-theme='dark'] .trash-table .trash-permanent:hover:not(:disabled) {
 .overview-thumbnail:hover {
   transform: scale(1.015);
 }
-.overview-recent {
-  max-width: 840px;
-}
 @media (max-width: 1150px) {
   .overview-metrics .metrics-item-link {
     padding: 18px;
-  }
-}
-@media (max-width: 650px) {
-  .overview-recent {
-    max-width: none;
   }
 }
 @media (prefers-reduced-motion: reduce) {

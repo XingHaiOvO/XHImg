@@ -144,7 +144,7 @@ export function Overview() {
         </div>
         {data.recent.length ? (
           <div className="recent-grid">
-            {data.recent.map((image: any) => (
+            {data.recent.slice(0, 6).map((image: any) => (
               <div key={image.id}>
                 <div className="overview-thumbnail" title="在文件夹中打开">
                   <Thumbnail
