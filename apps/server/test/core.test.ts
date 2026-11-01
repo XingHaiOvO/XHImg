@@ -837,3 +837,40 @@ test('storage configs encrypt secrets, disabling preserves reads, referenced con
     await f.close();
   }
 });
+
+test('site logo persists, keeps legacy updates compatible and scopes the image CSP', async () => {
+  const f = await fixture();
+  try {
+    const initial = (await f.request('GET', '/api/v1/admin/settings')).json();
+    assert.equal(initial.logoUrl, '');
+    const logoUrl = 'https://logos.example.com/logo.png';
+    const saved = await f.request('PUT', '/api/v1/admin/settings', { ...initial, logoUrl });
+    assert.equal(saved.statusCode, 200, saved.body);
+    assert.equal((await f.request('GET', '/api/v1/admin/settings')).json().logoUrl, logoUrl);
+    let publicSettings = await f.request('GET', '/api/v1/public/settings', undefined, {});
+    assert.equal(publicSettings.json().logoUrl, logoUrl);
+    assert.match(
+      String(publicSettings.headers['content-security-policy']),
+      /img-src[^;]*https:\/\/logos\.example\.com/,
+    );
+    const { logoUrl: omitted, ...legacy } = initial;
+    assert.equal((await f.request('PUT', '/api/v1/admin/settings', legacy)).statusCode, 200);
+    assert.equal(f.ctx.siteSettings().logoUrl, logoUrl);
+    for (const invalid of ['javascript:alert(1)', 'data:image/png;base64,abc', '/logo.png']) {
+      assert.equal(
+        (await f.request('PUT', '/api/v1/admin/settings', { ...initial, logoUrl: invalid }))
+          .statusCode,
+        400,
+      );
+    }
+    assert.equal((await f.request('PUT', '/api/v1/admin/settings', initial)).statusCode, 200);
+    publicSettings = await f.request('GET', '/api/v1/public/settings', undefined, {});
+    assert.equal(publicSettings.json().logoUrl, '');
+    assert.doesNotMatch(
+      String(publicSettings.headers['content-security-policy']),
+      /logos\.example\.com/,
+    );
+  } finally {
+    await f.close();
+  }
+});

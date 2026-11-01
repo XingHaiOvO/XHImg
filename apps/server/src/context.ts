@@ -12,6 +12,7 @@ export const query = (r: FastifyRequest) => r.query as Record<string, string>;
 const siteDefaults = {
   title: 'XHImg',
   description: '一次整理，随处调用。',
+  logoUrl: '',
   homeBackgroundUrl: '',
   allowedOrigins: [] as string[],
   originWhitelistEnabled: false,

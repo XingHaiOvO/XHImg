@@ -131,8 +131,10 @@ export async function createApp(config: Config) {
   });
   app.addHook('onRequest', async (req, reply) => {
     const origins = [...(await ctx.storage.imageOrigins())];
-    const backgroundUrl = ctx.siteSettings().homeBackgroundUrl;
-    if (backgroundUrl) origins.push(new URL(backgroundUrl).origin);
+    const site = ctx.siteSettings();
+    for (const imageUrl of [site.homeBackgroundUrl, site.logoUrl]) {
+      if (imageUrl) origins.push(new URL(imageUrl).origin);
+    }
     const imageOrigins = origins.join(' ');
     reply
       .header('X-Content-Type-Options', 'nosniff')

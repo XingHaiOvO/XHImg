@@ -197,6 +197,11 @@ const bodies: Record<string, any> = {
     {
       title: string,
       description: string,
+      logoUrl: {
+        type: 'string',
+        maxLength: 2048,
+        description: '站点图标（Logo）的HTTP(S)地址；空字符串使用内置图标，省略时保留当前值。',
+      },
       homeBackgroundUrl: {
         type: 'string',
         maxLength: 2048,

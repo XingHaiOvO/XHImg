@@ -266,7 +266,16 @@ function ServiceCard({ service }: { service: any }) {
 export function Home() {
   const { data, error, loading } = useData('public/services');
   const site = useData('public/settings');
+  useEffect(() => {
+    const changed = () => {
+      void site.reload();
+    };
+    window.addEventListener('site-settings', changed);
+    return () => window.removeEventListener('site-settings', changed);
+  }, [site.reload]);
   const [backgroundFailed, setBackgroundFailed] = useState(false);
+  const [logoFailed, setLogoFailed] = useState(false);
+  useEffect(() => setLogoFailed(false), [site.data?.logoUrl]);
   const backgroundUrl = site.data?.homeBackgroundUrl;
   useEffect(() => setBackgroundFailed(false), [backgroundUrl]);
   return (
@@ -284,16 +293,15 @@ export function Home() {
         <div className="home-banner-content">
           <div className="home-identity">
             <span className="home-logo">
-              <Aperture size={37} strokeWidth={1.5} />
+              {site.data?.logoUrl && !logoFailed ? (
+                <img src={site.data.logoUrl} alt="" onError={() => setLogoFailed(true)} />
+              ) : (
+                <Aperture size={37} strokeWidth={1.5} />
+              )}
             </span>
             <h1 id="home-title">{site.data?.title ?? 'XHImg'}</h1>
           </div>
-          <p className="home-tagline">Organize Once. Serve Anywhere.</p>
-          <p className="home-description">
-            {site.data?.description ?? '一次整理，随处调用。'}
-            <br />
-            让每一个文件夹，成为随时可用的图片资源。
-          </p>
+          {site.data?.description && <p className="home-description">{site.data.description}</p>}
           <div className="home-links">
             <Button asChild>
               <Link to="/gallery">

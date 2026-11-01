@@ -821,7 +821,9 @@ function SiteSettings() {
   const settings = useData('admin/settings'),
     [draft, setDraft] = useState<any>({}),
     [galleryOpen, setGalleryOpen] = useState(false),
+    [logoGalleryOpen, setLogoGalleryOpen] = useState(false),
     [previewError, setPreviewError] = useState(false),
+    [logoError, setLogoError] = useState(false),
     [saved, setSaved] = useState(false),
     action = useAction();
   useEffect(() => {
@@ -829,6 +831,7 @@ function SiteSettings() {
       setDraft({ ...settings.data, origins: settings.data.allowedOrigins.join('\n') });
   }, [settings.data]);
   useEffect(() => setPreviewError(false), [draft.homeBackgroundUrl]);
+  useEffect(() => setLogoError(false), [draft.logoUrl]);
   if (settings.loading) return <Busy />;
   if (settings.error) return <QueryFeedback query={settings} />;
   return (
@@ -854,6 +857,7 @@ function SiteSettings() {
               json('PUT', {
                 title: draft.title,
                 description: draft.description,
+                logoUrl: (draft.logoUrl ?? '').trim(),
                 homeBackgroundUrl: (draft.homeBackgroundUrl ?? '').trim(),
                 originWhitelistEnabled: !!draft.originWhitelistEnabled,
                 allowedOrigins: draft.origins
@@ -868,6 +872,32 @@ function SiteSettings() {
         }}
       >
         <section className="panel">
+          <Field
+            label="站点图标"
+            hint="显示在页头、页脚与首页，建议使用 1:1 的正方形图片；留空使用内置图标。"
+          >
+            <input
+              type="url"
+              maxLength={2048}
+              placeholder="https://example.com/logo.png"
+              value={draft.logoUrl ?? ''}
+              onChange={(e) => setDraft({ ...draft, logoUrl: e.target.value })}
+            />
+          </Field>
+          <div className="settings-logo">
+            {draft.logoUrl?.trim() && !logoError ? (
+              <img
+                src={draft.logoUrl.trim()}
+                alt="站点图标预览"
+                onError={() => setLogoError(true)}
+              />
+            ) : (
+              <div className="settings-logo-placeholder">内置</div>
+            )}
+            <Button type="button" variant="secondary" onClick={() => setLogoGalleryOpen(true)}>
+              从图库选择
+            </Button>
+          </div>
           <Field label="站点名称">
             <input
               required
@@ -875,8 +905,9 @@ function SiteSettings() {
               onChange={(e) => setDraft({ ...draft, title: e.target.value })}
             />
           </Field>
-          <Field label="站点描述">
+          <Field label="站点描述" hint="显示在首页标题下，支持换行；留空则不显示。">
             <textarea
+              maxLength={500}
               value={draft.description ?? ''}
               onChange={(e) => setDraft({ ...draft, description: e.target.value })}
             />
@@ -960,6 +991,21 @@ function SiteSettings() {
             onSelect={(url) => {
               setDraft({ ...draft, homeBackgroundUrl: url });
               setGalleryOpen(false);
+            }}
+          />
+        )}
+      </Modal>
+      <Modal
+        open={logoGalleryOpen}
+        onOpenChange={setLogoGalleryOpen}
+        title="选择站点图标"
+        description="最近 40 张图片。请选择访客可访问的公开图片，建议使用 1:1 的正方形图片。"
+      >
+        {logoGalleryOpen && (
+          <BackgroundGallery
+            onSelect={(url) => {
+              setDraft({ ...draft, logoUrl: url });
+              setLogoGalleryOpen(false);
             }}
           />
         )}

@@ -561,6 +561,10 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
       .object({
         title: name,
         description: z.string().max(500),
+        logoUrl: z
+          .union([z.literal(''), z.url({ protocol: /^https?$/ })])
+          .pipe(z.string().max(2048))
+          .optional(),
         homeBackgroundUrl: z
           .union([z.literal(''), z.url({ protocol: /^https?$/ })])
           .pipe(z.string().max(2048))
@@ -582,6 +586,7 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
       .parse(req.body);
     const settings = {
       ...body,
+      logoUrl: body.logoUrl ?? ctx.siteSettings().logoUrl,
       homeBackgroundUrl: body.homeBackgroundUrl ?? ctx.siteSettings().homeBackgroundUrl,
       originWhitelistEnabled:
         body.originWhitelistEnabled ?? ctx.siteSettings().originWhitelistEnabled,
@@ -590,8 +595,8 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
     return settings;
   });
   app.get('/api/v1/public/settings', async () => {
-    const { title, description, homeBackgroundUrl } = ctx.siteSettings();
-    return { title, description, homeBackgroundUrl };
+    const { title, description, logoUrl, homeBackgroundUrl } = ctx.siteSettings();
+    return { title, description, logoUrl, homeBackgroundUrl };
   });
   app.get('/api/v1/admin/overview', async (req) => ({
     images: ctx.db.one(

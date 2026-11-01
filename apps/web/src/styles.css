@@ -443,6 +443,7 @@ form > .button {
   letter-spacing: -0.25px;
 }
 .home-description {
+  white-space: pre-wrap;
   margin-top: 15px;
   font-size: 14px;
   line-height: 1.95;
@@ -698,13 +699,20 @@ form > .button {
   padding: 20px 0 24px;
   margin: 0 auto;
   border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+}
+.footer-main {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px 24px;
+  gap: 6px 24px;
+}
+.footer-legal {
+  margin-top: 12px;
+  font-size: 11px;
   color: var(--muted);
-  font-size: 12px;
 }
 .public-footer .brand {
   max-width: 100%;
@@ -725,15 +733,18 @@ form > .button {
 .public-footer nav {
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 22px;
 }
 .public-footer nav a {
   display: inline-flex;
   align-items: center;
-  min-height: 44px;
+  gap: 3px;
+  padding: 12px 0;
 }
 .public-footer nav a:hover {
   color: var(--blue);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .gallery-page,
 .docs-page {
@@ -1052,6 +1063,9 @@ html[data-theme='dark'] .docs-page .tok-method {
   min-height: 100vh;
 }
 .sidebar {
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
   width: 232px;
   flex-shrink: 0;
   background: var(--surface);
@@ -1064,6 +1078,7 @@ html[data-theme='dark'] .docs-page .tok-method {
   z-index: 30;
 }
 .sidebar .brand {
+  flex-shrink: 0;
   padding: 0 9px;
 }
 .sidebar-caption {
@@ -1072,17 +1087,29 @@ html[data-theme='dark'] .docs-page .tok-method {
   padding: 20px 9px 28px;
 }
 .sidebar nav {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-top: 28px;
+}
+.sidebar-group {
   display: flex;
   flex-direction: column;
   gap: 7px;
 }
+.sidebar-group + .sidebar-group {
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
 .sidebar nav a {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 12px 13px;
   font-size: 14px;
-  border-radius: 9px;
+  border-radius: var(--r-md);
   color: var(--muted);
 }
 .sidebar nav a:hover {
@@ -1093,18 +1120,103 @@ html[data-theme='dark'] .docs-page .tok-method {
   color: var(--blue);
   font-weight: 550;
 }
-.sidebar nav a:last-child {
-  margin-top: 18px;
-}
 .sidebar-bottom {
+  position: sticky;
+  bottom: 0;
+  flex-shrink: 0;
   margin-top: auto;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding-top: 20px;
+  gap: 8px;
+  padding: 16px 0 4px;
+  background: var(--surface);
   border-top: 1px solid var(--line);
 }
+.account-button {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  margin: -6px -8px;
+  border-radius: var(--r-md);
+  background: none;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-height: 44px;
+}
+.account-button:hover {
+  background: var(--hover);
+}
+.account-button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+.account-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.account-text strong {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-text small {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+.account-chevron {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--muted);
+  transition: transform 0.18s var(--ease);
+}
+.account-button[aria-expanded='true'] .account-chevron {
+  transform: rotate(180deg);
+}
+.account-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 5px;
+  box-shadow: 0 12px 32px #00000014;
+  z-index: 40;
+}
+.account-menu a,
+.account-menu button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 38px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  color: var(--text);
+  background: none;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.account-menu a:hover,
+.account-menu button:hover {
+  background: var(--hover);
+}
+.account-menu :is(a, button):focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
 .avatar {
+  flex-shrink: 0;
   height: 34px;
   width: 34px;
   border-radius: 50%;
@@ -1114,19 +1226,6 @@ html[data-theme='dark'] .docs-page .tok-method {
   background: var(--blue-soft);
   color: var(--blue);
   font-weight: 600;
-}
-.sidebar-bottom strong {
-  font-size: 12px;
-  display: block;
-}
-.sidebar-bottom small {
-  display: block;
-  color: var(--muted);
-  margin-top: 3px;
-}
-.sidebar-bottom .icon-button {
-  margin-left: auto;
-  min-width: 32px;
 }
 .admin-main {
   flex: 1;
@@ -4478,4 +4577,45 @@ html[data-theme='dark'] .trash-table .trash-permanent:hover:not(:disabled) {
   .overview-thumbnail:hover {
     transform: none;
   }
+}
+
+/* Configurable site logo */
+.brand-logo {
+  width: 35px;
+  height: 35px;
+  object-fit: contain;
+  flex-shrink: 0;
+  border-radius: var(--r-md);
+}
+.public-footer .brand-logo {
+  width: 27px;
+  height: 27px;
+  border-radius: var(--r-sm);
+}
+.home-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: inherit;
+}
+.settings-logo {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 12px 0 24px;
+}
+.settings-logo img,
+.settings-logo-placeholder {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  border-radius: var(--r-md);
+  background: var(--hover);
+}
+.settings-logo-placeholder {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 12px;
 }

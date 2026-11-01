@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import {
   Routes,
@@ -20,10 +20,10 @@ import {
   FolderOpen,
   Settings,
   Trash2,
-  LogOut,
   Menu,
   ArrowUpRight,
   Sparkles,
+  ChevronUp,
   X,
 } from 'lucide-react';
 import { api, json, setCsrf, useData, useAction } from './api';
@@ -36,6 +36,8 @@ import { Organization } from './Organization';
 export function Brand() {
   const site = useData('public/settings');
   const title = site.data?.title ?? 'XHImg';
+  const [logoFailed, setLogoFailed] = useState(false);
+  useEffect(() => setLogoFailed(false), [site.data?.logoUrl]);
   useEffect(() => {
     document.title = `${title} · 一次整理，随处调用`;
   }, [title]);
@@ -48,9 +50,18 @@ export function Brand() {
   }, [site.reload]);
   return (
     <Link to="/" className="brand" aria-label={`${title} 首页`}>
-      <span className="brand-icon">
-        <Aperture size={23} />
-      </span>
+      {site.data?.logoUrl && !logoFailed ? (
+        <img
+          className="brand-logo"
+          src={site.data.logoUrl}
+          alt=""
+          onError={() => setLogoFailed(true)}
+        />
+      ) : (
+        <span className="brand-icon">
+          <Aperture size={23} />
+        </span>
+      )}
       {title}
       <span className="brand-dot">.</span>
     </Link>
@@ -87,6 +98,8 @@ function Theme() {
 }
 function PublicShell() {
   const home = useLocation().pathname === '/';
+  const site = useData('public/settings');
+  const title = site.data?.title ?? 'XHImg';
   return (
     <div className={home ? 'public-site public-site-home' : 'public-site'}>
       <header className="public-header">
@@ -107,11 +120,19 @@ function PublicShell() {
       </header>
       <Outlet />
       <footer className="public-footer">
-        <Brand />
-        <nav aria-label="页脚导航">
-          <Link to="/gallery">图库</Link>
-          <Link to="/docs">API 文档</Link>
-        </nav>
+        <div className="footer-main">
+          <Brand />
+          <nav aria-label="页脚导航">
+            <Link to="/gallery">图库</Link>
+            <Link to="/docs">API 文档</Link>
+            <Link to="/admin">
+              管理入口 <ArrowUpRight size={14} />
+            </Link>
+          </nav>
+        </div>
+        <p className="footer-legal">
+          © {new Date().getFullYear()} {title}
+        </p>
       </footer>
     </div>
   );
@@ -120,10 +141,52 @@ function AdminShell() {
   const auth = useData('auth/me'),
     navigate = useNavigate(),
     location = useLocation(),
-    [open, setOpen] = useState(false);
+    [open, setOpen] = useState(false),
+    [menuOpen, setMenuOpen] = useState(false);
+  const accountRows = useRef<{ desktop: HTMLDivElement | null; mobile: HTMLDivElement | null }>({
+    desktop: null,
+    mobile: null,
+  });
+  const logout = useAction();
   useEffect(() => {
     setOpen(false);
+    setMenuOpen(false);
   }, [location.pathname, location.search]);
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [open]);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const row = open ? accountRows.current.mobile : accountRows.current.desktop;
+    if (!row) return;
+    const closeMenu = () => {
+      setMenuOpen(false);
+      row.querySelector<HTMLButtonElement>('.account-button')?.focus();
+    };
+    row.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    const pointerdown = (event: PointerEvent) => {
+      if (event.target instanceof Node && !row.contains(event.target)) {
+        closeMenu();
+        requestAnimationFrame(() => {
+          if (row.isConnected && document.activeElement === document.body)
+            row.querySelector<HTMLButtonElement>('.account-button')?.focus();
+        });
+      }
+    };
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        closeMenu();
+      }
+    };
+    document.addEventListener('pointerdown', pointerdown, true);
+    document.addEventListener('keydown', keydown, true);
+    return () => {
+      document.removeEventListener('pointerdown', pointerdown, true);
+      document.removeEventListener('keydown', keydown, true);
+    };
+  }, [menuOpen, open]);
   useEffect(() => {
     const media = matchMedia('(min-width: 651px)');
     const close = () => {
@@ -137,52 +200,117 @@ function AdminShell() {
   }, [auth.data]);
   if (auth.loading) return <Busy />;
   if (auth.error) return <Navigate to="/login" replace />;
-  const navigation = (
+  const navigation = (surface: 'desktop' | 'mobile') => (
     <>
       <Brand />
-      <p className="sidebar-caption">个人图片工作台</p>
       <nav aria-label="管理导航">
-        {[
-          ['/admin', LayoutDashboard, '概览'],
-          ['/admin/services', Shuffle, '随机图服务'],
-          ['/admin/folders', FolderOpen, '资源文件夹'],
-          ['/admin/organize', Sparkles, '智能整理'],
-          ['/admin/trash', Trash2, '回收站'],
-          ['/admin/settings', Settings, '设置中心'],
-        ].map(([path, Icon, label]: any) => (
-          <NavLink key={path} to={path} end={path === '/admin'} onClick={() => setOpen(false)}>
-            <Icon size={19} />
-            {label}
-          </NavLink>
-        ))}
-      </nav>
-      <div className="sidebar-bottom">
-        <div className="avatar">{auth.data.username[0]?.toUpperCase()}</div>
-        <div>
-          <strong>{auth.data.username}</strong>
-          <small>管理员</small>
+        <div className="sidebar-group">
+          {[
+            ['/admin', LayoutDashboard, '概览'],
+            ['/admin/services', Shuffle, '随机图服务'],
+            ['/admin/folders', FolderOpen, '资源文件夹'],
+            ['/admin/organize', Sparkles, '智能整理'],
+            ['/admin/trash', Trash2, '回收站'],
+          ].map(([path, Icon, label]: any) => (
+            <NavLink key={path} to={path} end={path === '/admin'} onClick={() => setOpen(false)}>
+              <Icon size={18} />
+              {label}
+            </NavLink>
+          ))}
         </div>
+        <div className="sidebar-group sidebar-group-secondary">
+          <NavLink to="/admin/settings" onClick={() => setOpen(false)}>
+            <Settings size={18} />
+            设置中心
+          </NavLink>
+        </div>
+      </nav>
+      <div
+        className="sidebar-bottom"
+        ref={(node) => {
+          accountRows.current[surface] = node;
+        }}
+      >
         <button
-          className="icon-button"
-          aria-label="退出登录"
-          onClick={async () => {
-            await api('auth/logout', json('POST'));
-            setCsrf('');
-            navigate('/login');
-          }}
+          type="button"
+          className="account-button"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen && (surface === 'mobile' ? open : !open)}
+          onClick={() => setMenuOpen((value) => !value)}
         >
-          <LogOut size={18} />
+          <span className="avatar">{auth.data.username[0]?.toUpperCase()}</span>
+          <span className="account-text">
+            <strong>{auth.data.username}</strong>
+            <small>管理员</small>
+          </span>
+          <ChevronUp size={14} className="account-chevron" aria-hidden="true" />
         </button>
+        {menuOpen && (surface === 'mobile' ? open : !open) && (
+          <div
+            className="account-menu"
+            role="menu"
+            onKeyDown={(event) => {
+              if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+              event.preventDefault();
+              const items = Array.from(
+                event.currentTarget.querySelectorAll<HTMLElement>(
+                  '[role="menuitem"]:not(:disabled)',
+                ),
+              );
+              const index = items.indexOf(document.activeElement as HTMLElement);
+              const next =
+                event.key === 'Home'
+                  ? 0
+                  : event.key === 'End'
+                    ? items.length - 1
+                    : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+              items[next]?.focus();
+            }}
+          >
+            <Link
+              role="menuitem"
+              to="/admin/settings?tab=security"
+              onClick={() => setMenuOpen(false)}
+            >
+              修改密码
+            </Link>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={logout.pending}
+              onClick={() => {
+                void logout.run(async () => {
+                  await api('auth/logout', json('POST'));
+                  setCsrf('');
+                  navigate('/login');
+                }, '');
+              }}
+            >
+              退出登录
+            </button>
+          </div>
+        )}
       </div>
     </>
   );
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
       <div className="admin-shell">
-        <aside className="sidebar desktop-sidebar">{navigation}</aside>
+        <aside className="sidebar desktop-sidebar">{navigation('desktop')}</aside>
         <Dialog.Portal>
           <Dialog.Overlay className="navigation-overlay" />
-          <Dialog.Content className="sidebar mobile-sidebar">
+          <Dialog.Content
+            className="sidebar mobile-sidebar"
+            onEscapeKeyDown={(event) => {
+              if (menuOpen) {
+                event.preventDefault();
+                setMenuOpen(false);
+                accountRows.current.mobile
+                  ?.querySelector<HTMLButtonElement>('.account-button')
+                  ?.focus();
+              }
+            }}
+          >
             <Dialog.Title className="sr-only">管理导航</Dialog.Title>
             <Dialog.Description className="sr-only">
               选择工作区，按 Escape 关闭导航。
@@ -190,7 +318,7 @@ function AdminShell() {
             <Dialog.Close className="icon-button navigation-close" aria-label="关闭管理导航">
               <X size={20} />
             </Dialog.Close>
-            {navigation}
+            {navigation('mobile')}
           </Dialog.Content>
         </Dialog.Portal>
         <div className="admin-main">
@@ -204,8 +332,7 @@ function AdminShell() {
                 <Menu size={20} />
               </button>
             </Dialog.Trigger>
-            <span>你的图片，你的服务。</span>
-            <div>
+            <div style={{ marginLeft: 'auto' }}>
               <Link to="/" target="_blank">
                 访问网站 <ArrowUpRight size={14} />
               </Link>
@@ -303,6 +430,25 @@ function AuthPage({ setup = false }: { setup?: boolean }) {
   );
 }
 export default function App() {
+  const site = useData('public/settings');
+  useEffect(() => {
+    const changed = () => void site.reload();
+    window.addEventListener('site-settings', changed);
+    return () => window.removeEventListener('site-settings', changed);
+  }, [site.reload]);
+  useEffect(() => {
+    if (!site.data) return;
+    const icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (!icon) return;
+    icon.href = site.data.logoUrl || '/favicon.svg';
+    icon.onerror = () => {
+      icon.onerror = null;
+      icon.href = '/favicon.svg';
+    };
+    return () => {
+      icon.onerror = null;
+    };
+  }, [site.data?.logoUrl]);
   return (
     <Routes>
       <Route element={<PublicShell />}>
