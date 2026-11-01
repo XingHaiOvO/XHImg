@@ -1,6 +1,6 @@
 import { useSearchParams } from 'react-router-dom';
-import { useState } from 'react';
-import { ArrowRightLeft, Plus, RefreshCw } from 'lucide-react';
+import { useState, useId } from 'react';
+import { ArrowRightLeft, ArrowRight, Plus, RefreshCw } from 'lucide-react';
 import { api, json, useData, useAction, usePolling, bytes } from './api';
 import {
   Pagination,
@@ -68,9 +68,16 @@ export function MigrationCreateDialog({
     [children, setChildren] = useState(false),
     [trash, setTrash] = useState(false),
     [draft, setDraft] = useState<StorageMigration>();
+  const formId = useId();
+  const disabledReason = !target
+    ? '请先选择目标存储'
+    : !imageIds && !source
+      ? '请先选择来源存储'
+      : '';
   const enabled = storages.data?.items.filter((s: any) => s.enabled && s.id !== source) ?? [];
   return (
     <Modal
+      cancelFocus
       busy={action.pending}
       open
       onOpenChange={(v) => {
@@ -78,6 +85,76 @@ export function MigrationCreateDialog({
       }}
       title={draft ? '确认迁移清单' : '创建存储迁移'}
       description="迁移现有图片，保留 ID、直链和权限；不改变新上传的默认存储。"
+      footer={
+        <>
+          <Button
+            type="button"
+            variant="ghost"
+            data-cancel
+            onClick={close}
+            disabled={action.pending}
+          >
+            取消
+          </Button>
+          {!storages.loading &&
+            !folders.loading &&
+            !storages.error &&
+            !folders.error &&
+            (draft ? (
+              <>
+                <div className="button-row">
+                  <Button
+                    disabled={action.pending || draft.total_count === draft.skipped_count}
+                    onClick={() =>
+                      void action.run(async () => {
+                        const task = await api<StorageMigration>(
+                          `admin/storage-migrations/${draft.id}/start`,
+                          json('POST'),
+                        );
+                        onStarted(task);
+                        close();
+                      }, '迁移任务已开始')
+                    }
+                  >
+                    确认执行迁移
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    disabled={action.pending}
+                    onClick={() =>
+                      void action.run(async () => {
+                        await api(`admin/storage-migrations/${draft.id}/cancel`, json('POST'));
+                        setDraft(undefined);
+                      }, '')
+                    }
+                  >
+                    返回修改
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                {disabledReason && (
+                  <span className="modal-footer-reason muted">{disabledReason}</span>
+                )}
+                <div className="button-row">
+                  <Button
+                    type="submit"
+                    form={formId}
+                    disabled={
+                      action.pending ||
+                      !target ||
+                      (!imageIds && !source) ||
+                      (!!imageIds && imageIds.length > 100)
+                    }
+                  >
+                    {action.pending ? '正在生成清单…' : '预览迁移清单'}
+                  </Button>
+                </div>
+              </>
+            ))}
+        </>
+      }
     >
       {storages.loading || folders.loading ? (
         <Busy />
@@ -88,57 +165,51 @@ export function MigrationCreateDialog({
         </>
       ) : draft ? (
         <>
-          <div className="migration-preview">
+          <dl className="migration-summary">
+            <div>
+              <dt>目标存储</dt>
+              <dd>{draft.target_name}</dd>
+            </div>
+            <div>
+              <dt>清单张数</dt>
+              <dd>
+                {draft.total_count} 张（可执行 {draft.total_count - draft.skipped_count} 张）
+              </dd>
+            </div>
+            <div>
+              <dt>预计占用</dt>
+              <dd>约 {bytes(draft.estimated_bytes)}</dd>
+            </div>
+          </dl>
+          <div className="modal-note">
             <p>
-              目标存储：<strong>{draft.target_name}</strong>
-            </p>
-            <p>
-              清单已冻结：<strong>{draft.total_count} 张</strong>，其中可执行{' '}
-              <strong>{draft.total_count - draft.skipped_count} 张</strong>。
-            </p>
-            <p>当前结果与保留原图约 {bytes(draft.estimated_bytes)}，不含缩略图。</p>
-            <p className="muted">
               草稿有效至 {new Date(draft.expires_at).toLocaleTimeString('zh-CN')}
               。源副本将保留，迁移结束后可手动清理。
             </p>
-            {draft.skipReasons.map((reason) => (
-              <p key={reason.reason}>
-                {reason.reason}：{reason.count} 张
-              </p>
-            ))}
           </div>
-          <div className="button-row">
-            <Button
-              disabled={action.pending || draft.total_count === draft.skipped_count}
-              onClick={() =>
-                void action.run(async () => {
-                  const task = await api<StorageMigration>(
-                    `admin/storage-migrations/${draft.id}/start`,
-                    json('POST'),
-                  );
-                  onStarted(task);
-                  close();
-                }, '迁移任务已开始')
-              }
-            >
-              确认执行迁移
-            </Button>
-            <Button
-              variant="secondary"
-              disabled={action.pending}
-              onClick={() =>
-                void action.run(async () => {
-                  await api(`admin/storage-migrations/${draft.id}/cancel`, json('POST'));
-                  setDraft(undefined);
-                }, '')
-              }
-            >
-              返回修改
-            </Button>
-          </div>
+          {draft.skipReasons.length > 0 && (
+            <table className="migration-skip-reasons">
+              <thead>
+                <tr>
+                  <th>原因</th>
+                  <th>张数</th>
+                </tr>
+              </thead>
+              <tbody>
+                {draft.skipReasons.map((reason) => (
+                  <tr key={reason.reason}>
+                    <td>{reason.reason}</td>
+                    <td>{reason.count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </>
       ) : (
         <form
+          id={formId}
+          className="settings-modal-form"
           onSubmit={(e) => {
             e.preventDefault();
             void action.run(async () => {
@@ -158,74 +229,87 @@ export function MigrationCreateDialog({
             }, '');
           }}
         >
-          {imageIds ? (
-            <p>已选择 {imageIds.length} 张图片。每批最多100张。</p>
-          ) : (
-            <>
-              <Field label="来源存储">
-                <select
-                  required
-                  value={source}
-                  onChange={(e) => {
-                    setSource(e.target.value);
-                    if (target === e.target.value) setTarget('');
-                  }}
-                >
-                  <option value="">请选择来源存储</option>
-                  {storages.data?.items.map((s: any) => (
+          <section className="modal-form-group">
+            <h3>迁移方向</h3>
+            <div className="migration-direction">
+              {imageIds ? (
+                <div className="modal-note">已选择 {imageIds.length} 张图片。每批最多100张。</div>
+              ) : (
+                <>
+                  <Field label="来源存储">
+                    <select
+                      required
+                      value={source}
+                      onChange={(e) => {
+                        setSource(e.target.value);
+                        if (target === e.target.value) setTarget('');
+                      }}
+                    >
+                      <option value="">请选择来源存储</option>
+                      {storages.data?.items.map((s: any) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                          {s.enabled ? '' : '（已停用，仍可读取）'}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </>
+              )}
+              <ArrowRight size={18} className="migration-direction-arrow" />
+              <Field label="目标存储">
+                <select required value={target} onChange={(e) => setTarget(e.target.value)}>
+                  <option value="">请选择已启用的目标存储</option>
+                  {enabled.map((s: any) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
-                      {s.enabled ? '' : '（已停用，仍可读取）'}
                     </option>
                   ))}
                 </select>
               </Field>
-              <Field label="来源文件夹">
-                <select value={folder} onChange={(e) => setFolder(e.target.value)}>
-                  <option value="">该来源存储的全部文件夹</option>
-                  {folders.data?.items.map((f: any) => (
-                    <option key={f.id} value={f.id}>
-                      {f.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Check
-                label="包含子文件夹"
-                checked={children}
-                disabled={!folder}
-                onChange={(e) => setChildren(e.target.checked)}
-              />
-            </>
+            </div>
+          </section>
+          {!imageIds && (
+            <section className="modal-form-group">
+              <h3>来源范围</h3>
+              <div className="migration-source-fields">
+                <Field label="来源文件夹">
+                  <select value={folder} onChange={(e) => setFolder(e.target.value)}>
+                    <option value="">该来源存储的全部文件夹</option>
+                    {folders.data?.items.map((f: any) => (
+                      <option key={f.id} value={f.id}>
+                        {f.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Check
+                  label="包含子文件夹"
+                  checked={children}
+                  disabled={!folder}
+                  onChange={(e) => setChildren(e.target.checked)}
+                />
+              </div>
+            </section>
           )}
-          <Field label="目标存储">
-            <select required value={target} onChange={(e) => setTarget(e.target.value)}>
-              <option value="">请选择已启用的目标存储</option>
-              {enabled.map((s: any) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Check
-            label="包含回收站图片（仍保留删除状态）"
-            checked={trash}
-            onChange={(e) => setTrash(e.target.checked)}
-          />
-          <p className="muted">
-            只处理确认时的图片集合。迁空旧存储前，请先手动调整新上传目标。复制和校验会读取、写入对象，云服务可能按流量计费。
-          </p>
-          <Button
-            disabled={
-              action.pending ||
-              !target ||
-              (!imageIds && !source) ||
-              (!!imageIds && imageIds.length > 100)
-            }
-          >
-            {action.pending ? '正在生成清单…' : '预览迁移清单'}
-          </Button>
+          <section className="modal-form-group">
+            <h3>迁移选项</h3>
+
+            <Check
+              label="包含回收站图片（仍保留删除状态）"
+              checked={trash}
+              onChange={(e) => setTrash(e.target.checked)}
+            />
+            <p className="modal-field-hint">回收站中的图片也会被复制，删除状态保留。</p>
+          </section>
+          <div className="modal-note">
+            <p>只处理确认时的图片集合。</p>
+            <details>
+              <summary>查看说明</summary>
+              <p>迁空旧存储前，请先手动调整新上传目标。</p>
+              <p>复制和校验会读取、写入对象，云服务可能按流量计费。</p>
+            </details>
+          </div>
         </form>
       )}
       <ActionFeedback action={action} />
@@ -296,15 +380,50 @@ export function StorageMigrations() {
             >
               <ArrowRightLeft size={20} />
               <span>
-                <strong>迁往 {task.target_name}</strong>
+                <strong title={task.id}>迁往 {task.target_name}</strong>
                 <small>
-                  {new Date(task.created_at).toLocaleString('zh-CN')} · {task.total_count} 张
+                  <time
+                    title={new Date(task.created_at).toLocaleString('zh-CN')}
+                    dateTime={new Date(task.created_at).toISOString()}
+                  >
+                    {(() => {
+                      const minutes = Math.max(
+                        0,
+                        Math.floor((Date.now() - task.created_at) / 60000),
+                      );
+                      return minutes < 1
+                        ? '刚刚'
+                        : minutes < 60
+                          ? `${minutes} 分钟前`
+                          : minutes < 1440
+                            ? `${Math.floor(minutes / 60)} 小时前`
+                            : `${Math.floor(minutes / 1440)} 天前`;
+                    })()}
+                  </time>{' '}
+                  · {task.total_count} 张
                 </small>
               </span>
               <span>
-                {states[task.state] ?? task.state}
+                <span
+                  className={
+                    'badge ' +
+                    (task.state === 'completed'
+                      ? 'good'
+                      : ['failed', 'completed_with_errors'].includes(task.state)
+                        ? 'warn'
+                        : ['running', 'pending', 'queued'].includes(task.state)
+                          ? 'info'
+                          : '')
+                  }
+                >
+                  {states[task.state] ?? task.state}
+                </span>
                 <small>
-                  成功 {task.success_count} · 失败 {task.failed_count} · 跳过 {task.skipped_count}
+                  成功 {task.success_count} ·{' '}
+                  <span className={task.failed_count > 0 ? 'settings-failed-count' : undefined}>
+                    失败 {task.failed_count}
+                  </span>{' '}
+                  · 跳过 {task.skipped_count}
                 </small>
               </span>
             </button>

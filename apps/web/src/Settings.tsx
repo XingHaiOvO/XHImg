@@ -1,6 +1,17 @@
 import { useUrlTab } from './navigation';
-import { useState, useEffect, lazy, Suspense } from 'react';
-import { Plus, HardDrive, Cloud, KeyRound, ShieldCheck, Copy } from 'lucide-react';
+import { useState, useEffect, useId, lazy, Suspense } from 'react';
+import {
+  Plus,
+  HardDrive,
+  Cloud,
+  KeyRound,
+  Copy,
+  MoreHorizontal,
+  Trash2,
+  ImageIcon,
+  Eye,
+  EyeOff,
+} from 'lucide-react';
 import { api, json, useData, useAction, useNotice, bytes, copy } from './api';
 import {
   QueryFeedback,
@@ -12,6 +23,8 @@ import {
   Modal,
   Busy,
 } from './components/ui';
+import { useImageSource } from './image-links';
+import type { ImageInfo } from '../../../packages/shared/src/index';
 import { PageHeading } from './Resources';
 import { ProcessingSettings, AISettings } from './P1Settings';
 const StorageMigrations = lazy(() =>
@@ -33,36 +46,40 @@ export function SettingsPage() {
   };
   return (
     <>
-      <PageHeading title="设置中心" description="基础设施，安静地为你的图片服务。" />
-      <div className="tabs settings-tabs" aria-label="设置分类">
-        {Object.keys(labels).map((t) => (
-          <button
-            key={t}
-            className={tab === t ? 'active' : ''}
-            aria-current={tab === t ? 'page' : undefined}
-            onClick={() => setTab(t)}
-          >
-            {labels[t]}
-          </button>
-        ))}
+      <PageHeading title="设置中心" description="管理存储、图片处理、站点与账户配置。" />
+      <div className="settings-layout">
+        <nav className="settings-nav" aria-label="设置分类">
+          {Object.keys(labels).map((t) => (
+            <button
+              key={t}
+              className={tab === t ? 'active' : ''}
+              aria-current={tab === t ? 'page' : undefined}
+              onClick={() => setTab(t)}
+            >
+              {labels[t]}
+            </button>
+          ))}
+        </nav>
+        <div className="settings-body">
+          {tab === 'storage' ? (
+            <StorageSettings />
+          ) : tab === 'migrations' ? (
+            <Suspense fallback={<Busy />}>
+              <StorageMigrations />
+            </Suspense>
+          ) : tab === 'keys' ? (
+            <KeySettings />
+          ) : tab === 'site' ? (
+            <SiteSettings />
+          ) : tab === 'processing' ? (
+            <ProcessingSettings />
+          ) : tab === 'ai' ? (
+            <AISettings />
+          ) : (
+            <SecuritySettings />
+          )}
+        </div>
       </div>
-      {tab === 'storage' ? (
-        <StorageSettings />
-      ) : tab === 'migrations' ? (
-        <Suspense fallback={<Busy />}>
-          <StorageMigrations />
-        </Suspense>
-      ) : tab === 'keys' ? (
-        <KeySettings />
-      ) : tab === 'site' ? (
-        <SiteSettings />
-      ) : tab === 'processing' ? (
-        <ProcessingSettings />
-      ) : tab === 'ai' ? (
-        <AISettings />
-      ) : (
-        <SecuritySettings />
-      )}
     </>
   );
 }
@@ -71,24 +88,22 @@ function StorageSettings() {
       useData('admin/storage-backends'),
     [edit, setEdit] = useState<any>(),
     action = useAction();
+  const addStorage = () =>
+    setEdit({
+      name: '',
+      type: 's3',
+      enabled: 1,
+      is_default: 0,
+      config: { endpoint: '', region: 'auto', bucket: '', forcePathStyle: true },
+    });
   return (
     <>
       <div className="section-heading">
         <div>
-          <h2>每一张图片，都有可靠的归处。</h2>
+          <h2>存储后端</h2>
           <p className="muted">停用只阻止新上传，已有图片仍可读取。</p>
         </div>
-        <Button
-          onClick={() =>
-            setEdit({
-              name: '',
-              type: 's3',
-              enabled: 1,
-              is_default: 0,
-              config: { endpoint: '', region: 'auto', bucket: '', forcePathStyle: true },
-            })
-          }
-        >
+        <Button onClick={addStorage}>
           <Plus size={16} />
           添加存储
         </Button>
@@ -98,6 +113,12 @@ function StorageSettings() {
         <Busy />
       ) : error ? (
         <QueryFeedback query={{ error, reload }} />
+      ) : !data?.items.length ? (
+        <div className="empty">
+          <HardDrive size={28} />
+          <h3>还没有存储后端</h3>
+          <Button onClick={addStorage}>添加第一个存储</Button>
+        </div>
       ) : (
         <div className="storage-grid">
           {data?.items.map((s: any) => (
@@ -108,7 +129,7 @@ function StorageSettings() {
                   {s.is_default ? '默认存储' : s.enabled ? '已启用' : '已停用'}
                 </span>
               </div>
-              <h3>{s.name}</h3>
+              <h3 title={s.id}>{s.name}</h3>
               <p className="muted">{s.type === 'local' ? '本地文件系统' : s.config.endpoint}</p>
               <div className="storage-usage">
                 <strong>{bytes(s.size)}</strong>
@@ -121,63 +142,70 @@ function StorageSettings() {
                 )}
               </div>
               <div className="button-row">
+                <details className="storage-menu">
+                  <summary aria-label={`更多存储操作：${s.name}`}>
+                    <MoreHorizontal size={18} />
+                  </summary>
+                  <div className="storage-menu-items">
+                    <Button
+                      variant="ghost"
+                      disabled={action.pending}
+                      onClick={() =>
+                        void action.run(
+                          () => api(`admin/storage-backends/${s.id}/test`, json('POST')),
+                          '连接测试通过',
+                        )
+                      }
+                    >
+                      测试连接
+                    </Button>
+                    {!s.is_default && s.enabled === 1 && (
+                      <Button
+                        variant="ghost"
+                        disabled={action.pending}
+                        onClick={() =>
+                          void action.run(async () => {
+                            await api(
+                              `admin/storage-backends/${s.id}`,
+                              json('PATCH', { isDefault: true }),
+                            );
+                            await reload();
+                          })
+                        }
+                      >
+                        设为默认
+                      </Button>
+                    )}
+                  </div>
+                </details>
                 <Button variant="secondary" onClick={() => setEdit(s)}>
                   配置
                 </Button>
-                <Button
-                  variant="ghost"
-                  disabled={action.pending}
-                  onClick={() =>
-                    void action.run(
-                      () => api(`admin/storage-backends/${s.id}/test`, json('POST')),
-                      '连接测试通过',
-                    )
-                  }
-                >
-                  测试连接
-                </Button>
-                {!s.is_default && s.enabled === 1 && (
-                  <Button
-                    variant="ghost"
-                    disabled={action.pending}
-                    onClick={() =>
-                      void action.run(async () => {
-                        await api(
-                          `admin/storage-backends/${s.id}`,
-                          json('PATCH', { isDefault: true }),
-                        );
-                        await reload();
-                      })
-                    }
-                  >
-                    设为默认
-                  </Button>
-                )}
               </div>
-              <small className="muted">{s.id}</small>
             </section>
           ))}
         </div>
       )}
       <StorageEditor value={edit} close={() => setEdit(undefined)} reload={reload} />
       <section className="panel maintenance-note">
-        <h3>备份与恢复</h3>
-        <p>
-          备份应包含数据库一致性副本、本地图片、部署配置及 MASTER_KEY。S3
-          对象需另行备份。升级前先备份，恢复时先停止写入。
-        </p>
-        <p className="muted">具体命令见随源码交付的 README 和 docs/operations.md。</p>
+        <p>备份应包含数据库、本地图片、部署配置与 MASTER_KEY。详见 docs/operations.md。</p>
       </section>
     </>
   );
 }
 function StorageEditor({ value, close, reload }: any) {
   const confirm = useConfirm();
+  const notice = useNotice();
+  const formId = useId();
+  const [showSecret, setShowSecret] = useState(false),
+    [saved, setSaved] = useState(false);
   const [draft, setDraft] = useState<any>({}),
     [credentials, setCredentials] = useState({ accessKeyId: '', secretAccessKey: '' }),
     action = useAction();
   useEffect(() => {
     if (value) {
+      setSaved(false);
+      setShowSecret(false);
       setDraft({ ...value, enabled: !!value.enabled, isDefault: !!value.is_default });
       setCredentials({ accessKeyId: '', secretAccessKey: '' });
     }
@@ -186,17 +214,62 @@ function StorageEditor({ value, close, reload }: any) {
     setDraft({ ...draft, config: { ...draft.config, [key]: v } });
   return (
     <Modal
+      cancelFocus
       busy={action.pending}
       open={!!value}
       onOpenChange={(v) => {
         if (!v) close();
       }}
       title={value?.id ? '存储配置' : '添加存储'}
-      description="S3 Bucket 保持私有。鉴权后返回最长有效 5 分钟的临时直链。"
+      description="配置图片存储连接与上传策略。"
+      footer={
+        <>
+          <Button
+            type="button"
+            variant="ghost"
+            data-cancel
+            onClick={close}
+            disabled={action.pending}
+          >
+            取消
+          </Button>
+          {saved && (
+            <Button type="button" variant="ghost" onClick={() => location.reload()}>
+              刷新查看
+            </Button>
+          )}
+          <div className="button-row">
+            <Button type="submit" form={formId} disabled={action.pending || saved}>
+              {action.pending ? '正在提交…' : '保存存储'}
+            </Button>
+            {value?.id && !value.is_default && (
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={action.pending || saved}
+                onClick={async () => {
+                  if (!(await confirm(`删除存储配置“${value.name}”？仍被引用时会阻止删除。`)))
+                    return;
+                  void action.run(async () => {
+                    await api(`admin/storage-backends/${value.id}`, json('DELETE'));
+                    await reload();
+                    close();
+                  });
+                }}
+              >
+                删除配置
+              </Button>
+            )}
+          </div>
+        </>
+      }
     >
       <form
+        id={formId}
+        className="settings-modal-form"
         onSubmit={(e) => {
           e.preventDefault();
+          if (saved) return;
           void action.run(async () => {
             const body: any = {
               name: draft.name,
@@ -226,110 +299,120 @@ function StorageEditor({ value, close, reload }: any) {
               json(value.id ? 'PATCH' : 'POST', body),
             );
             await reload();
-            close();
-            if (draft.type === 's3' && body.config) location.reload();
-          });
+            setSaved(true);
+            notice('存储已保存，刷新页面后生效');
+          }, '');
         }}
       >
-        <Field label="名称">
-          <input
-            required
-            value={draft.name ?? ''}
-            onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-          />
-        </Field>
-        {!value?.id && (
-          <Field label="存储类型">
-            <select
-              value={draft.type ?? 's3'}
-              onChange={(e) => setDraft({ ...draft, type: e.target.value })}
-            >
-              <option value="s3">S3 兼容对象存储</option>
-              <option value="local">本地文件系统</option>
-            </select>
-          </Field>
-        )}
-        {draft.type === 's3' && (
-          <>
-            <p className="muted">
-              {value?.id
-                ? '修改连接参数时，必须同时重新输入两项凭证；已有图片的连接不可更换。'
-                : '支持 S3、R2、MinIO 等 S3 兼容服务。'}
-            </p>
-            <p className="muted">
-              Endpoint 必须可被图片访问者访问；HTTPS 站点请使用 HTTPS Endpoint。保存新的 S3
-              连接后会重新加载页面以应用图片来源策略。
-            </p>
-            {[
-              ['endpoint', 'Endpoint'],
-              ['region', 'Region'],
-              ['bucket', 'Bucket'],
-            ].map(([key, label]) => (
-              <Field key={key} label={label!}>
+        <fieldset className="modal-fields" disabled={saved}>
+          <section className="modal-form-group">
+            <h3>基本信息</h3>
+            <Field label="名称">
+              <input
+                required
+                value={draft.name ?? ''}
+                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+              />
+            </Field>
+            {!value?.id && (
+              <Field label="存储类型">
+                <select
+                  value={draft.type ?? 's3'}
+                  onChange={(e) => setDraft({ ...draft, type: e.target.value })}
+                >
+                  <option value="s3">S3 兼容对象存储</option>
+                  <option value="local">本地文件系统</option>
+                </select>
+              </Field>
+            )}
+          </section>
+          {draft.type === 's3' && (
+            <section className="modal-form-group">
+              <h3>连接与凭证</h3>
+              <div className="modal-note">
+                <p>
+                  {value?.id
+                    ? '修改连接参数时，必须同时重新输入两项凭证；已有图片的连接不可更换。'
+                    : '支持 S3、R2、MinIO 等 S3 兼容服务。'}
+                </p>
+                <details>
+                  <summary>查看说明</summary>
+                  <p>Endpoint 必须可被图片访问者访问；HTTPS 站点请使用 HTTPS Endpoint。</p>
+                  <p>
+                    S3 Bucket 保持私有。鉴权后返回最长有效 5
+                    分钟的临时直链。保存后可刷新页面以应用图片来源策略。
+                  </p>
+                </details>
+              </div>
+              {[
+                ['endpoint', 'Endpoint'],
+                ['region', 'Region'],
+                ['bucket', 'Bucket'],
+              ].map(([key, label]) => (
+                <Field key={key} label={label!}>
+                  <input
+                    required
+                    value={draft.config?.[key!] ?? ''}
+                    onChange={(e) => config(key!, e.target.value)}
+                  />
+                </Field>
+              ))}
+              <Field label="Access Key">
                 <input
-                  required
-                  value={draft.config?.[key!] ?? ''}
-                  onChange={(e) => config(key!, e.target.value)}
+                  required={!value?.id}
+                  autoComplete="off"
+                  value={credentials.accessKeyId}
+                  onChange={(e) => setCredentials({ ...credentials, accessKeyId: e.target.value })}
                 />
               </Field>
-            ))}
-            <Field label="Access Key">
-              <input
-                required={!value?.id}
-                autoComplete="off"
-                value={credentials.accessKeyId}
-                onChange={(e) => setCredentials({ ...credentials, accessKeyId: e.target.value })}
+              <div className="modal-secret-field">
+                <Field label="Secret Key" hint="凭证加密保存，读取配置时不会返回。">
+                  <input
+                    type={showSecret ? 'text' : 'password'}
+                    required={!value?.id}
+                    autoComplete="new-password"
+                    value={credentials.secretAccessKey}
+                    onChange={(e) =>
+                      setCredentials({ ...credentials, secretAccessKey: e.target.value })
+                    }
+                  />
+                </Field>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="modal-secret-toggle"
+                  aria-label={showSecret ? '隐藏 Secret Key' : '显示 Secret Key'}
+                  aria-pressed={showSecret}
+                  onClick={() => setShowSecret(!showSecret)}
+                >
+                  {showSecret ? <EyeOff size={16} /> : <Eye size={16} />}
+                </Button>
+              </div>
+              <Check
+                label="使用 Path Style"
+                checked={!!draft.config?.forcePathStyle}
+                onChange={(e) => config('forcePathStyle', e.target.checked)}
               />
-            </Field>
-            <Field label="Secret Key" hint="凭证加密保存，读取配置时不会返回。">
-              <input
-                type="password"
-                required={!value?.id}
-                autoComplete="new-password"
-                value={credentials.secretAccessKey}
-                onChange={(e) =>
-                  setCredentials({ ...credentials, secretAccessKey: e.target.value })
-                }
-              />
-            </Field>
-            <Check
-              label="使用 Path Style"
-              checked={!!draft.config?.forcePathStyle}
-              onChange={(e) => config('forcePathStyle', e.target.checked)}
-            />
-          </>
-        )}
-        <Check
-          label="允许新上传"
-          checked={!!draft.enabled}
-          onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })}
-        />
-        <Check
-          label="设为默认存储"
-          checked={!!draft.isDefault}
-          disabled={!!value?.is_default}
-          onChange={(e) => setDraft({ ...draft, isDefault: e.target.checked })}
-        />
-        <div className="button-row">
-          <Button disabled={action.pending}>{action.pending ? '正在提交…' : '保存存储'}</Button>
-          {value?.id && !value.is_default && (
-            <Button
-              type="button"
-              variant="destructive"
-              disabled={action.pending}
-              onClick={async () => {
-                if (await confirm(`删除存储配置“${value.name}”？仍被引用时会阻止删除。`))
-                  void action.run(async () => {
-                    await api(`admin/storage-backends/${value.id}`, json('DELETE'));
-                    await reload();
-                    close();
-                  });
-              }}
-            >
-              删除配置
-            </Button>
+            </section>
           )}
-        </div>
+          <section className="modal-form-group">
+            <h3>上传策略</h3>
+            <Check
+              label="允许新上传"
+              checked={!!draft.enabled}
+              onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })}
+            />
+            <Check
+              label="设为默认存储"
+              checked={!!draft.isDefault}
+              disabled={!!value?.is_default}
+              onChange={(e) => setDraft({ ...draft, isDefault: e.target.checked })}
+            />
+            {!value?.id && (
+              <p className="modal-field-hint">勾选后，新建即设为默认，新上传会写入此存储。</p>
+            )}
+          </section>
+        </fieldset>
         <ActionFeedback action={action} />
       </form>
     </Modal>
@@ -349,7 +432,7 @@ function KeySettings() {
     <>
       <div className="section-heading">
         <div>
-          <h2>把权限，交给正确的调用方。</h2>
+          <h2>API Key</h2>
           <p className="muted">每个密钥独立授权，上传不等于私有读取。</p>
         </div>
         <Button onClick={() => setOpen(true)}>
@@ -362,6 +445,12 @@ function KeySettings() {
         <Busy />
       ) : keys.error ? (
         <QueryFeedback query={keys} />
+      ) : !keys.data?.items.length ? (
+        <div className="empty">
+          <KeyRound size={28} />
+          <h3>还没有 API Key</h3>
+          <Button onClick={() => setOpen(true)}>创建第一个密钥</Button>
+        </div>
       ) : (
         <div className="panel table-wrap">
           <table>
@@ -370,6 +459,7 @@ function KeySettings() {
                 <th>名称与前缀</th>
                 <th>操作权限与范围</th>
                 <th>状态</th>
+                <th>创建时间</th>
                 <th>最近使用</th>
                 <th>操作</th>
               </tr>
@@ -379,34 +469,51 @@ function KeySettings() {
                 <tr key={k.id}>
                   <td>
                     <strong>{k.name}</strong>
-                    <small>{k.prefix}…</small>
+                    <small title={k.prefix}>{k.prefix}…</small>
                   </td>
                   <td>
                     <div className="tags">
                       {k.permissions.map((p: string) => (
-                        <span key={p}>{p}</span>
+                        <span className="badge" key={p}>
+                          {p}
+                        </span>
                       ))}
                     </div>
-                    <small>
-                      {k.grants
-                        .map((g: any) =>
-                          g.kind === 'all'
+                    <div className="tags">
+                      {k.grants.map((g: any, index: number) => (
+                        <span className="badge" key={index} title={g.resource_id}>
+                          {g.kind === 'all'
                             ? '全部资源'
-                            : `${g.kind}: ${g.resource_id}${g.descendants ? '（含子目录）' : ''}`,
-                        )
-                        .join('；')}
-                    </small>
+                            : `${g.kind}: ${g.kind === 'storage' && g.resource_id === 'local' ? 'local' : ((g.kind === 'folder' ? folders.data?.items : g.kind === 'service' ? services.data?.items : storages.data?.items)?.find((resource: any) => resource.id === g.resource_id)?.name ?? '指定资源')}${g.descendants ? '（含子目录）' : ''}`}
+                        </span>
+                      ))}
+                    </div>
                   </td>
                   <td>
-                    {k.revoked ? '已撤销' : k.expires && k.expires < Date.now() ? '已过期' : '有效'}
+                    <span
+                      className={
+                        'badge ' +
+                        (!k.revoked && (!k.expires || k.expires >= Date.now()) ? 'good' : '')
+                      }
+                    >
+                      {k.revoked
+                        ? '已撤销'
+                        : k.expires && k.expires < Date.now()
+                          ? '已过期'
+                          : '有效'}
+                    </span>
                     {k.expires && <small>{new Date(k.expires).toLocaleString('zh-CN')} 到期</small>}
                   </td>
+                  <td>{k.created_at ? new Date(k.created_at).toLocaleString('zh-CN') : '—'}</td>
                   <td>
                     {k.last_used ? new Date(k.last_used).toLocaleString('zh-CN') : '尚未使用'}
                   </td>
                   <td>
                     <Button
-                      variant="destructive"
+                      variant="ghost"
+                      className="settings-revoke icon-button"
+                      aria-label="撤销密钥"
+                      title={`撤销密钥：${k.name}`}
                       disabled={!!k.revoked || action.pending}
                       onClick={async () => {
                         if (
@@ -420,19 +527,13 @@ function KeySettings() {
                           }, '密钥已撤销');
                       }}
                     >
-                      撤销
+                      <Trash2 size={16} />
                     </Button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          {keys.data?.items.length === 0 && (
-            <div className="empty">
-              <KeyRound size={28} />
-              <p>为你的第一个应用创建密钥。</p>
-            </div>
-          )}
         </div>
       )}
       <KeyEditor
@@ -479,19 +580,51 @@ function KeyEditor({ open, close, folders, services, storages, done }: any) {
   const [expiry, setExpiry] = useState(''),
     [rate, setRate] = useState(120),
     action = useAction();
+  const formId = useId();
+  const togglePermission = (permission: string, checked: boolean) => {
+    setPermissions((current) => {
+      let next = checked
+        ? [...new Set([...current, permission])]
+        : current.filter((p) => p !== permission);
+      if (permission === 'private:read' && checked) next = [...new Set([...next, 'read'])];
+      if (permission === 'read' && !checked) next = next.filter((p) => p !== 'private:read');
+      return next;
+    });
+  };
   const patch = (index: number, value: any) =>
     setGrants(grants.map((g, i) => (i === index ? { ...g, ...value } : g)));
   return (
     <Modal
+      cancelFocus
       busy={action.pending}
       open={open}
       onOpenChange={(v) => {
         if (!v) close();
       }}
       title="创建 API Key"
-      description="操作权限和资源范围需同时满足。私有读取需要 read 与 private:read。"
+      description="为应用选择操作权限和资源范围。"
+      footer={
+        <>
+          <Button
+            type="button"
+            variant="ghost"
+            data-cancel
+            onClick={close}
+            disabled={action.pending}
+          >
+            取消
+          </Button>
+          <div className="button-row">
+            <Button type="submit" form={formId} disabled={action.pending || !permissions.length}>
+              创建并显示密钥
+            </Button>
+          </div>
+        </>
+      }
     >
       <form
+        id={formId}
+        className="settings-modal-form"
         onSubmit={(e) => {
           e.preventDefault();
           void action.run(async () => {
@@ -509,109 +642,176 @@ function KeyEditor({ open, close, folders, services, storages, done }: any) {
           }, '');
         }}
       >
-        <Field label="密钥名称">
-          <input required value={title} onChange={(e) => setTitle(e.target.value)} />
-        </Field>
-        <fieldset>
-          <legend>操作权限</legend>
+        <section className="modal-form-group">
+          <h3>基本信息</h3>
+          <Field label="密钥名称">
+            <input required value={title} onChange={(e) => setTitle(e.target.value)} />
+          </Field>
+        </section>
+        <section className="modal-form-group">
+          <h3>操作权限</h3>
+          <div className="modal-permission-presets">
+            <span>常用组合</span>
+            <button type="button" className="text-link" onClick={() => setPermissions(['read'])}>
+              只读
+            </button>
+            <button type="button" className="text-link" onClick={() => setPermissions(['upload'])}>
+              上传
+            </button>
+            <button
+              type="button"
+              className="text-link"
+              onClick={() => setPermissions(['read', 'private:read', 'upload'])}
+            >
+              完整读写
+            </button>
+          </div>
           {[
-            ['read', '图片读取'],
-            ['upload', '图片上传'],
-            ['private:read', '私有图片读取'],
-            ['random', '随机图服务调用'],
-            ['ai:classify', 'AI 图片分类'],
-          ].map(([key, label]) => (
-            <Check
-              key={key}
-              label={label!}
-              checked={permissions.includes(key!)}
-              onChange={(e) =>
-                setPermissions(
-                  e.target.checked ? [...permissions, key!] : permissions.filter((p) => p !== key),
-                )
-              }
-            />
+            {
+              title: '读取',
+              items: [
+                ['read', '图片读取'],
+                ['private:read', '私有图片读取'],
+              ],
+            },
+            { title: '写入', items: [['upload', '图片上传']] },
+            {
+              title: '服务',
+              items: [
+                ['random', '随机图服务调用'],
+                ['ai:classify', 'AI 图片分类'],
+              ],
+            },
+          ].map((group) => (
+            <fieldset className="perm-group" key={group.title}>
+              <legend>{group.title}</legend>
+              {group.items.map(([permission, label]) => (
+                <div key={permission}>
+                  <Check
+                    label={label!}
+                    checked={permissions.includes(permission!)}
+                    disabled={permission === 'read' && permissions.includes('private:read')}
+                    aria-describedby={
+                      permission === 'read' && permissions.includes('private:read')
+                        ? `${formId}-read-hint`
+                        : undefined
+                    }
+                    onChange={(e) => togglePermission(permission!, e.target.checked)}
+                  />
+                  {permission === 'read' && permissions.includes('private:read') && (
+                    <p id={`${formId}-read-hint`} className="modal-field-hint">
+                      随私有读取自动启用
+                    </p>
+                  )}
+                </div>
+              ))}
+            </fieldset>
           ))}
-        </fieldset>
-        <div className="rules-heading">
-          <h3>资源范围</h3>
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() =>
-              setGrants([...grants, { kind: 'folder', resourceId: '', descendants: false }])
-            }
-          >
-            <Plus size={15} />
-            添加范围
-          </Button>
-        </div>
-        <p className="muted">可同时指定随机服务、来源文件夹与存储，避免授予不必要的全站权限。</p>
-        {grants.map((g, index) => (
-          <fieldset key={index}>
-            <legend>范围 {index + 1}</legend>
-            <Field label="授权类型">
-              <select
-                value={g.kind}
-                onChange={(e) =>
-                  patch(index, { kind: e.target.value, resourceId: '', descendants: false })
-                }
-              >
-                <option value="folder">指定文件夹</option>
-                <option value="service">指定随机图服务</option>
-                <option value="storage">指定存储</option>
-                <option value="all">全部资源（谨慎授予）</option>
-              </select>
-            </Field>
-            {g.kind !== 'all' && (
-              <Field label="目标资源">
+        </section>
+        <section className="modal-form-group">
+          <div className="rules-heading">
+            <h3>资源范围</h3>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() =>
+                setGrants([...grants, { kind: 'folder', resourceId: '', descendants: false }])
+              }
+            >
+              <Plus size={15} />
+              添加范围
+            </Button>
+          </div>
+          {grants.some((grant) => grant.kind === 'all') && (
+            <div className="modal-note warn" role="status">
+              该密钥已授权全部资源。建议至少指定一个文件夹、随机图服务或存储。
+            </div>
+          )}
+          <div className="modal-note">
+            <p>可同时指定随机服务、来源文件夹与存储，避免授予不必要的全站权限。</p>
+          </div>
+          {grants.map((g, index) => (
+            <fieldset className="modal-range" key={index}>
+              <legend>范围 {index + 1}</legend>
+              <Field label="授权类型">
                 <select
-                  required
-                  value={g.resourceId}
-                  onChange={(e) => patch(index, { resourceId: e.target.value })}
+                  value={g.kind}
+                  onChange={(e) =>
+                    patch(index, { kind: e.target.value, resourceId: '', descendants: false })
+                  }
                 >
-                  <option value="">请选择</option>
-                  {(g.kind === 'folder' ? folders : g.kind === 'service' ? services : storages).map(
-                    (v: any) => (
+                  <option value="folder">指定文件夹</option>
+                  <option value="service">指定随机图服务</option>
+                  <option value="storage">指定存储</option>
+                  <option value="all">全部资源（谨慎授予）</option>
+                </select>
+              </Field>
+              {g.kind !== 'all' && (
+                <Field label="目标资源">
+                  <select
+                    required
+                    value={g.resourceId}
+                    onChange={(e) => patch(index, { resourceId: e.target.value })}
+                  >
+                    <option value="">请选择</option>
+                    {(g.kind === 'folder'
+                      ? folders
+                      : g.kind === 'service'
+                        ? services
+                        : storages
+                    ).map((v: any) => (
                       <option key={v.id} value={v.id}>
                         {v.name}
                       </option>
-                    ),
-                  )}
-                </select>
-              </Field>
-            )}
-            {g.kind === 'folder' && (
-              <Check
-                label="授权包含子文件夹"
-                checked={g.descendants}
-                onChange={(e) => patch(index, { descendants: e.target.checked })}
-              />
-            )}
-            {grants.length > 1 && (
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => setGrants(grants.filter((_, i) => i !== index))}
-              >
-                移除此范围
-              </Button>
-            )}
-          </fieldset>
-        ))}
-        <Field label="到期时间（可选）">
-          <input type="datetime-local" value={expiry} onChange={(e) => setExpiry(e.target.value)} />
-        </Field>
-        <Field label="每分钟请求上限" hint="0 表示不限制；随机图服务自身的调用上限独立生效。">
-          <input
-            type="number"
-            min="0"
-            max="10000"
-            value={rate}
-            onChange={(e) => setRate(Number(e.target.value))}
-          />
-        </Field>
-        <Button disabled={action.pending || !permissions.length}>创建并显示密钥</Button>
+                    ))}
+                  </select>
+                </Field>
+              )}
+              {g.kind === 'folder' && (
+                <Check
+                  label="授权包含子文件夹"
+                  checked={g.descendants}
+                  onChange={(e) => patch(index, { descendants: e.target.checked })}
+                />
+              )}
+              {grants.length > 1 && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setGrants(grants.filter((_, i) => i !== index))}
+                >
+                  移除此范围
+                </Button>
+              )}
+            </fieldset>
+          ))}
+        </section>
+        <section className="modal-form-group">
+          <h3>有效期与限流</h3>
+          <Field label="到期时间（可选）" hint="留空表示永不过期">
+            <input
+              type="datetime-local"
+              value={expiry}
+              onChange={(e) => setExpiry(e.target.value)}
+            />
+          </Field>
+          {expiry && (
+            <p className="modal-field-hint" role="status">
+              {new Date(expiry).getTime() <= Date.now()
+                ? '已过期'
+                : `还剩 ${Math.ceil((new Date(expiry).getTime() - Date.now()) / 86400000)} 天`}
+            </p>
+          )}
+          <Field label="每分钟请求上限" hint="0 表示不限制；随机图服务自身的调用上限独立生效。">
+            <input
+              type="number"
+              min="0"
+              max="10000"
+              value={rate}
+              onChange={(e) => setRate(Number(e.target.value))}
+            />
+          </Field>
+        </section>
         <ActionFeedback action={action} />
       </form>
     </Modal>
@@ -620,18 +820,32 @@ function KeyEditor({ open, close, folders, services, storages, done }: any) {
 function SiteSettings() {
   const settings = useData('admin/settings'),
     [draft, setDraft] = useState<any>({}),
+    [galleryOpen, setGalleryOpen] = useState(false),
+    [previewError, setPreviewError] = useState(false),
+    [saved, setSaved] = useState(false),
     action = useAction();
   useEffect(() => {
     if (settings.data)
       setDraft({ ...settings.data, origins: settings.data.allowedOrigins.join('\n') });
   }, [settings.data]);
+  useEffect(() => setPreviewError(false), [draft.homeBackgroundUrl]);
   if (settings.loading) return <Busy />;
   if (settings.error) return <QueryFeedback query={settings} />;
   return (
-    <section className="panel narrow-panel">
-      <h2>站点设置</h2>
+    <>
+      <div className="section-heading">
+        <div>
+          <h2>站点设置</h2>
+          <p className="muted">管理站点品牌、首页背景与跨域访问策略。</p>
+        </div>
+        <Button form="site-settings" type="submit" disabled={action.pending}>
+          保存站点设置
+        </Button>
+      </div>
       <QueryFeedback query={settings} />
       <form
+        id="site-settings"
+        className="settings-form"
         onSubmit={(e) => {
           e.preventDefault();
           void action.run(async () => {
@@ -649,104 +863,234 @@ function SiteSettings() {
               }),
             );
             window.dispatchEvent(new Event('site-settings'));
-            if ((draft.homeBackgroundUrl ?? '').trim() !== settings.data.homeBackgroundUrl) {
-              // Refresh the document policy before navigating to a newly configured image host.
-              window.location.reload();
-            }
-          });
+            setSaved(true);
+          }, '已保存，刷新页面后生效');
         }}
       >
-        <Field label="站点名称">
-          <input
-            required
-            value={draft.title ?? ''}
-            onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-          />
-        </Field>
-        <Field label="站点描述">
-          <textarea
-            value={draft.description ?? ''}
-            onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-          />
-        </Field>
-        <Field label="首页背景图片" hint="填写 HTTP(S) 图片地址，留空使用默认底色。">
-          <input
-            type="url"
-            maxLength={2048}
-            placeholder="https://example.com/background.jpg"
-            value={draft.homeBackgroundUrl ?? ''}
-            onChange={(e) => setDraft({ ...draft, homeBackgroundUrl: e.target.value })}
-          />
-        </Field>
-        <Check
-          label="启用跨域来源白名单"
-          checked={!!draft.originWhitelistEnabled}
-          onChange={(e) => setDraft({ ...draft, originWhitelistEnabled: e.target.checked })}
-        />
-        <p className="muted">
-          {draft.originWhitelistEnabled
-            ? '仅允许本站、PUBLIC_URL 和下方白名单来源。列表为空时仅允许本站与 PUBLIC_URL。'
-            : '默认允许任意 HTTP(S) 来源跨域访问。接口仍需相应授权，跨域管理员 Cookie 不开放。'}
-        </p>
-        <Field
-          label="允许跨域的来源"
-          hint="每行一个完整来源，例如 https://example.com，不含路径和末尾斜杠。仅在开启白名单后生效，关闭时保留已填写内容。"
-        >
-          <textarea
-            disabled={!draft.originWhitelistEnabled}
-            value={draft.origins ?? ''}
-            onChange={(e) => setDraft({ ...draft, origins: e.target.value })}
-          />
-        </Field>
-        <Button disabled={action.pending}>{action.pending ? '正在提交…' : '保存站点设置'}</Button>
-        <ActionFeedback action={action} />
+        <section className="panel">
+          <Field label="站点名称">
+            <input
+              required
+              value={draft.title ?? ''}
+              onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+            />
+          </Field>
+          <Field label="站点描述">
+            <textarea
+              value={draft.description ?? ''}
+              onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+            />
+          </Field>
+          <Field label="首页背景图片" hint="填写 HTTP(S) 图片地址，留空使用默认底色。">
+            <input
+              type="url"
+              maxLength={2048}
+              placeholder="https://example.com/background.jpg"
+              value={draft.homeBackgroundUrl ?? ''}
+              onChange={(e) => setDraft({ ...draft, homeBackgroundUrl: e.target.value })}
+            />
+          </Field>
+          <div className="settings-background">
+            {draft.homeBackgroundUrl?.trim() && !previewError ? (
+              <img
+                src={draft.homeBackgroundUrl.trim()}
+                alt="首页背景预览"
+                onError={() => setPreviewError(true)}
+              />
+            ) : (
+              <div className="settings-background-placeholder">使用默认底色</div>
+            )}
+            <Button type="button" variant="secondary" onClick={() => setGalleryOpen(true)}>
+              从图库选择
+            </Button>
+          </div>
+          <section className="settings-group">
+            <div className="settings-group-heading">
+              <h3>跨域与访问控制</h3>
+              <span className="badge">API</span>
+            </div>
+            <Check
+              label="启用跨域来源白名单"
+              checked={!!draft.originWhitelistEnabled}
+              onChange={(e) => setDraft({ ...draft, originWhitelistEnabled: e.target.checked })}
+            />
+            <p className="muted">
+              {draft.originWhitelistEnabled
+                ? '仅允许本站、PUBLIC_URL 和下方白名单来源。列表为空时仅允许本站与 PUBLIC_URL。'
+                : '默认允许任意 HTTP(S) 来源跨域访问。接口仍需相应授权，跨域管理员 Cookie 不开放。'}
+            </p>
+            <Field
+              label="允许跨域的来源"
+              hint="每行一个完整来源，例如 https://example.com，不含路径和末尾斜杠。仅在开启白名单后生效，关闭时保留已填写内容。"
+            >
+              <textarea
+                disabled={!draft.originWhitelistEnabled}
+                value={draft.origins ?? ''}
+                onChange={(e) => setDraft({ ...draft, origins: e.target.value })}
+              />
+            </Field>
+          </section>
+        </section>
+        <div className="settings-actions">
+          <ActionFeedback action={action} />
+          {saved && (
+            <button
+              type="button"
+              className="settings-text-button"
+              onClick={() => window.location.reload()}
+            >
+              刷新查看
+            </button>
+          )}
+          <div className="settings-action-buttons">
+            <Button type="submit" disabled={action.pending}>
+              {action.pending ? '正在提交…' : '保存站点设置'}
+            </Button>
+          </div>
+        </div>
       </form>
-    </section>
+      <Modal
+        open={galleryOpen}
+        onOpenChange={setGalleryOpen}
+        title="从图库选择"
+        description="最近 40 张图片。首页背景应选择访客可访问的公开图片。"
+      >
+        {galleryOpen && (
+          <BackgroundGallery
+            onSelect={(url) => {
+              setDraft({ ...draft, homeBackgroundUrl: url });
+              setGalleryOpen(false);
+            }}
+          />
+        )}
+      </Modal>
+    </>
   );
 }
+function BackgroundGallery({ onSelect }: { onSelect: (url: string) => void }) {
+  const images = useData<{ items: ImageInfo[] }>('admin/images?page=1');
+  if (images.loading) return <Busy />;
+  if (images.error) return <QueryFeedback query={images} />;
+  return (
+    <div className="settings-gallery">
+      <QueryFeedback query={images} backgroundOnly />
+      {images.data?.items.length ? (
+        <div className="settings-gallery-grid">
+          {images.data.items.slice(0, 40).map((image) => (
+            <BackgroundChoice key={image.id} image={image} onSelect={onSelect} />
+          ))}
+        </div>
+      ) : (
+        <div className="empty">
+          <ImageIcon size={28} />
+          <p>图库中还没有图片</p>
+        </div>
+      )}
+    </div>
+  );
+}
+function BackgroundChoice({
+  image,
+  onSelect,
+}: {
+  image: ImageInfo;
+  onSelect: (url: string) => void;
+}) {
+  const preview = useImageSource(image, true);
+  return (
+    <button
+      type="button"
+      className="settings-gallery-choice"
+      aria-label={`选择背景：${image.name}`}
+      title={image.name}
+      onClick={() =>
+        onSelect(new URL(image.logicalUrl || `/i/${image.id}`, window.location.origin).href)
+      }
+    >
+      {preview.failed ? (
+        <ImageIcon size={24} />
+      ) : (
+        <img src={preview.source} onError={preview.onError} alt="" loading="lazy" />
+      )}
+      <span>{image.name}</span>
+    </button>
+  );
+}
+
 function SecuritySettings() {
   const [current, setCurrent] = useState(''),
     [password, setPassword] = useState(''),
+    [confirmation, setConfirmation] = useState(''),
+    notice = useNotice(),
     action = useAction();
   return (
-    <section className="panel narrow-panel">
-      <ShieldCheck size={28} />
-      <h2>管理员安全</h2>
-      <p className="muted">修改密码会注销所有管理员会话，并使对应的私有签名链接失效。</p>
+    <>
+      <div className="section-heading">
+        <div>
+          <h2>管理员安全</h2>
+          <p className="muted">修改密码会注销所有管理员会话，并使对应的私有签名链接失效。</p>
+        </div>
+        <Button form="security-settings" type="submit" disabled={action.pending}>
+          修改密码
+        </Button>
+      </div>
       <form
+        id="security-settings"
+        className="settings-form"
         onSubmit={(e) => {
           e.preventDefault();
+          if (password !== confirmation) {
+            notice('两次输入的新密码不一致', true);
+            return;
+          }
           void action.run(async () => {
             await api('admin/password', json('PUT', { currentPassword: current, password }));
             location.href = '/login';
           }, '密码已修改，请重新登录');
         }}
       >
-        <Field label="当前密码">
-          <input
-            type="password"
-            required
-            value={current}
-            autoComplete="current-password"
-            onChange={(e) => setCurrent(e.target.value)}
-          />
-        </Field>
-        <Field label="新密码" hint="至少 12 个字符。">
-          <input
-            type="password"
-            required
-            minLength={12}
-            maxLength={256}
-            value={password}
-            autoComplete="new-password"
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </Field>
-        <Button disabled={action.pending}>
-          {action.pending ? '正在提交…' : '修改密码并重新登录'}
-        </Button>
-        <ActionFeedback action={action} />
+        <section className="panel">
+          <Field label="当前密码">
+            <input
+              type="password"
+              required
+              value={current}
+              autoComplete="current-password"
+              onChange={(e) => setCurrent(e.target.value)}
+            />
+          </Field>
+          <Field label="新密码" hint="至少 12 个字符。">
+            <input
+              type="password"
+              required
+              minLength={12}
+              maxLength={256}
+              value={password}
+              autoComplete="new-password"
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </Field>
+          <Field label="确认新密码">
+            <input
+              type="password"
+              required
+              minLength={12}
+              maxLength={256}
+              autoComplete="new-password"
+              value={confirmation}
+              onChange={(e) => setConfirmation(e.target.value)}
+            />
+          </Field>
+        </section>
+        <div className="settings-actions">
+          <ActionFeedback action={action} />
+          <div className="settings-action-buttons">
+            <Button type="submit" disabled={action.pending}>
+              {action.pending ? '正在提交…' : '修改密码并重新登录'}
+            </Button>
+          </div>
+        </div>
       </form>
-    </section>
+    </>
   );
 }

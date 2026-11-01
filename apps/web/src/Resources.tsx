@@ -14,6 +14,7 @@ import {
   Copy,
   RefreshCw,
   ArrowUpRight,
+  AlertTriangle,
   X,
   Pencil,
 } from 'lucide-react';
@@ -39,18 +40,26 @@ export function PageHeading({
   children,
 }: {
   title: string;
-  description: string;
+  description?: string;
   children?: React.ReactNode;
 }) {
   return (
     <div className="section-heading">
       <div>
         <h1>{title}</h1>
-        <p className="muted">{description}</p>
+        {description && <p className="muted">{description}</p>}
       </div>
       {children}
     </div>
   );
+}
+function relativeTime(timestamp: number) {
+  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
+  if (minutes < 1) return '刚刚';
+  if (minutes < 60) return `${minutes} 分钟前`;
+  if (minutes < 1440) return `${Math.floor(minutes / 60)} 小时前`;
+  if (minutes < 43200) return `${Math.floor(minutes / 1440)} 天前`;
+  return new Date(timestamp).toLocaleDateString('zh-CN');
 }
 export function Overview() {
   const navigate = useNavigate();
@@ -58,31 +67,74 @@ export function Overview() {
     action = useAction();
   if (loading) return <Busy />;
   if (error) return <QueryFeedback query={{ error, reload }} />;
+  // The overview endpoint returns only the latest 20 jobs; this count covers that subset.
+  const failed = data.jobs.filter((job: any) => job.state === 'failed').length;
   return (
     <>
-      <PageHeading title="一切，井然有序。" description="从这里，开始今天的图片工作。">
-        <Button asChild>
-          <Link to="/admin/folders">
-            <Upload size={17} />
-            上传图片
-          </Link>
-        </Button>
+      <PageHeading title="概览">
+        <div className="button-row">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => void reload()}
+            disabled={refreshing}
+            aria-label="刷新数据"
+          >
+            <RefreshCw size={16} className={refreshing ? 'spin' : undefined} aria-hidden="true" />
+          </Button>
+          <Button asChild>
+            <Link to="/admin/folders">
+              <Upload size={17} />
+              上传图片
+            </Link>
+          </Button>
+        </div>
       </PageHeading>
-      <QueryFeedback query={{ error: refreshError, refreshing, reload }} />
-      <div className="metrics">
-        {[
-          ['图片总数', data.images.total ?? 0, '张图片'],
-          ['存储占用', bytes(data.images.bytes), '当前结果与保留原图，不含缩略图'],
-          ['公开图片', data.images.publicCount ?? 0, `私有 ${data.images.privateCount ?? 0} 张`],
-          ['API 调用', data.services.calls, `${data.services.n} 个服务`],
-        ].map(([title, value, detail]) => (
-          <section key={title}>
-            <span>{title}</span>
-            <strong>{value}</strong>
-            <small>{detail}</small>
+      {failed > 0 && (
+        <Link className="overview-alert" to="/admin/organize?tab=failed">
+          <AlertTriangle size={15} aria-hidden="true" />
+          <span>{failed} 个任务失败</span>
+          <span className="overview-alert-link">查看</span>
+        </Link>
+      )}
+      {(refreshError || refreshing) && (
+        <QueryFeedback query={{ error: refreshError, refreshing, reload }} />
+      )}
+      {data.images.total !== 0 && (
+        <div className="metrics overview-metrics">
+          <section className="metrics-item">
+            <Link className="metrics-item-link" to="/admin/folders">
+              <span>图片总数</span>
+              <strong>{data.images.total ?? 0}</strong>
+            </Link>
           </section>
-        ))}
-      </div>
+          <section className="metrics-item">
+            <Link className="metrics-item-link" to="/admin/settings?tab=storage">
+              <span>存储占用</span>
+              <strong>{bytes(data.images.bytes)}</strong>
+            </Link>
+          </section>
+          <section className="metrics-item">
+            <Link className="metrics-item-link" to="/admin/folders">
+              <span>文件夹</span>
+              <strong>{data.folders}</strong>
+            </Link>
+          </section>
+          <section>
+            <span>公开 / 私有</span>
+            <strong>
+              {data.images.publicCount ?? 0}
+              <span className="metrics-pair"> / {data.images.privateCount ?? 0}</span>
+            </strong>
+          </section>
+          <section className="metrics-item">
+            <Link className="metrics-item-link" to="/admin/services">
+              <span>累计调用</span>
+              <strong>{data.services.calls ?? 0}</strong>
+            </Link>
+          </section>
+        </div>
+      )}
       <div className="panel overview-recent">
         <div className="section-heading">
           <h2>最近上传</h2>
@@ -94,12 +146,22 @@ export function Overview() {
           <div className="recent-grid">
             {data.recent.map((image: any) => (
               <div key={image.id}>
-                <Thumbnail
-                  image={image}
-                  onClick={() => navigate(`/admin/folders?folder=${image.folderId}`)}
-                />
-                <Link to={`/admin/folders?folder=${image.folderId}`}>
-                  <span>{image.name}</span>
+                <div className="overview-thumbnail" title="在文件夹中打开">
+                  <Thumbnail
+                    image={image}
+                    onClick={() => navigate(`/admin/folders?folder=${image.folderId}`)}
+                  />
+                </div>
+                <Link
+                  to={`/admin/folders?folder=${image.folderId}`}
+                  title={
+                    image.name?.includes('-') ? image.name : `${image.width} × ${image.height}`
+                  }
+                >
+                  <span>
+                    {image.width} × {image.height}
+                    {image.createdAt ? ` · ${relativeTime(image.createdAt)}` : ''}
+                  </span>
                 </Link>
               </div>
             ))}
@@ -108,7 +170,7 @@ export function Overview() {
           <div className="empty">
             <Images size={32} />
             <h3>为你的图库添加第一张图片</h3>
-            <p>先创建文件夹，再上传并设置访问权限。</p>
+            <p>创建文件夹后上传图片</p>
             <Button asChild variant="secondary">
               <Link to="/admin/folders">打开资源文件夹</Link>
             </Button>
@@ -117,13 +179,12 @@ export function Overview() {
       </div>
       {data.jobs.length > 0 && (
         <section className="panel">
-          <h2>后台任务</h2>
-          <p className="muted">缩略图和彻底删除任务会自动执行，失败后可重试。</p>
+          <h2 title="缩略图和彻底删除任务会自动执行，失败后可重试。">后台任务</h2>
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>图片</th>
+                  <th style={{ width: 160 }}>图片</th>
                   <th>任务</th>
                   <th>状态</th>
                   <th>操作</th>
@@ -132,7 +193,16 @@ export function Overview() {
               <tbody>
                 {data.jobs.map((job: any) => (
                   <tr key={job.id}>
-                    <td>{job.image_id}</td>
+                    <td title={job.image_id}>
+                      {job.width && job.height ? (
+                        <span>
+                          {job.width} × {job.height}
+                          {job.image_deleted ? '（已删除）' : ''}
+                        </span>
+                      ) : (
+                        <span className="muted">已清除</span>
+                      )}
+                    </td>
                     <td>
                       {{
                         purge: '彻底删除',
@@ -143,12 +213,27 @@ export function Overview() {
                       }[job.kind as string] ?? job.kind}
                     </td>
                     <td>
-                      {job.state === 'failed'
-                        ? '失败'
-                        : job.state === 'running'
-                          ? '处理中'
-                          : '等待中'}
-                      {job.error && <small>{job.error}</small>}
+                      {job.state === 'failed' ? (
+                        '失败'
+                      ) : job.state === 'running' ? (
+                        '处理中'
+                      ) : (
+                        <span className="badge">等待中</span>
+                      )}
+                      {job.error && (
+                        <small
+                          title={job.error}
+                          style={{
+                            display: 'block',
+                            maxWidth: 240,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                        >
+                          {job.error}
+                        </small>
+                      )}
                     </td>
                     <td>
                       {job.state === 'failed' && (

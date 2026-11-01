@@ -67,6 +67,7 @@ export function Modal({
   title,
   description,
   children,
+  footer,
   busy = false,
   cancelFocus = false,
 }: {
@@ -75,6 +76,7 @@ export function Modal({
   title: string;
   description?: string;
   children: React.ReactNode;
+  footer?: React.ReactNode;
   busy?: boolean;
   cancelFocus?: boolean;
 }) {
@@ -111,6 +113,7 @@ export function Modal({
             </DialogPrimitive.Close>
           </header>
           <div className="modal-body">{children}</div>
+          {footer && <footer className="modal-footer">{footer}</footer>}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

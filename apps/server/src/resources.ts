@@ -600,7 +600,13 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
     folders: ctx.db.one('SELECT COUNT(*) n FROM folders')!.n,
     services: ctx.db.one('SELECT COUNT(*) n,COALESCE(SUM(calls),0) calls FROM random_endpoints'),
     jobs: ctx.db.all(
-      'SELECT id,image_id,kind,state,attempts,error FROM jobs ORDER BY created_at DESC LIMIT 20',
+      `SELECT j.id, j.image_id, j.kind, j.state, j.attempts, j.error,
+              i.width, i.height, i.name AS image_name,
+              (i.deleted_at IS NOT NULL) AS image_deleted
+       FROM jobs j
+       LEFT JOIN images i ON i.id = j.image_id
+       ORDER BY j.created_at DESC
+       LIMIT 20`,
     ),
     recent: await Promise.all(
       ctx.db
