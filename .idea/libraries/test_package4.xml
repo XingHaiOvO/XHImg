@@ -1,9 +1,0 @@
-<component name="libraryTable">
-  <library name="test-package4">
-    <CLASSES>
-      <root url="jar://$PROJECT_DIR$/.cache/docker-runtime-Zwp8jF/node_modules/.pnpm/thread-stream@4.2.0/node_modules/thread-stream/test/dir with spaces/test-package.zip!/" />
-    </CLASSES>
-    <JAVADOC />
-    <SOURCES />
-  </library>
-</component>

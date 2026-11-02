@@ -1120,6 +1120,21 @@ html[data-theme='dark'] .docs-page .tok-method {
   color: var(--blue);
   font-weight: 550;
 }
+.nav-count {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: var(--r-full);
+  background: var(--hover);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+}
+.sidebar nav a.active .nav-count {
+  background: #fff;
+  color: var(--blue);
+}
 .sidebar-bottom {
   position: sticky;
   bottom: 0;
@@ -2830,7 +2845,8 @@ summary {
   right: 24px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  align-items: stretch;
+  gap: 12px;
   max-width: min(460px, calc(100vw - 32px));
   max-height: 50dvh;
   overflow-y: auto;
@@ -2846,6 +2862,14 @@ summary {
   cursor: default;
   padding: 12px 14px;
   overflow-wrap: anywhere;
+  box-shadow: 0 3px 10px #00000014;
+  animation: notice-in 0.18s var(--ease);
+}
+@keyframes notice-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
 }
 .notice-stack .notice .icon-button {
   color: inherit;

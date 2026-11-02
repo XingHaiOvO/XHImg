@@ -131,6 +131,7 @@ export function usePolling(reload: () => Promise<void>, active: boolean) {
     };
   }, [active]);
 }
+const MAX_NOTICES = 3;
 const NoticeContext = createContext<(text: string, error?: boolean) => void>(() => {});
 export function NoticeProvider({ children }: { children: ReactNode }) {
   const [notices, setNotices] = useState<{ id: number; text: string; error: boolean }[]>([]);
@@ -140,8 +141,13 @@ export function NoticeProvider({ children }: { children: ReactNode }) {
     <NoticeContext.Provider
       value={(text, error = false) => {
         const id = ++nextId.current;
-        setNotices((items) => [...items.filter((item) => item.error), { id, text, error }]);
-        if (!error) setTimeout(() => dismiss(id), 6000);
+        setNotices((items) =>
+          [
+            ...items.filter((item) => item.text !== text || item.error !== error),
+            { id, text, error },
+          ].slice(-MAX_NOTICES),
+        );
+        setTimeout(() => dismiss(id), error ? 8000 : 4000);
       }}
     >
       {children}

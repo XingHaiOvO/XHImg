@@ -143,6 +143,8 @@ function AdminShell() {
     location = useLocation(),
     [open, setOpen] = useState(false),
     [menuOpen, setMenuOpen] = useState(false);
+  const trashCount = useData('admin/images?trash=true&limit=1');
+  const trashTotal = trashCount.data?.total ?? 0;
   const accountRows = useRef<{ desktop: HTMLDivElement | null; mobile: HTMLDivElement | null }>({
     desktop: null,
     mobile: null,
@@ -198,6 +200,11 @@ function AdminShell() {
   useEffect(() => {
     if (auth.data) setCsrf(auth.data.csrf);
   }, [auth.data]);
+  useEffect(() => {
+    const reloadCount = () => void trashCount.reload();
+    window.addEventListener('trash-changed', reloadCount);
+    return () => window.removeEventListener('trash-changed', reloadCount);
+  }, [trashCount.reload]);
   if (auth.loading) return <Busy />;
   if (auth.error) return <Navigate to="/login" replace />;
   const navigation = (surface: 'desktop' | 'mobile') => (
@@ -215,6 +222,9 @@ function AdminShell() {
             <NavLink key={path} to={path} end={path === '/admin'} onClick={() => setOpen(false)}>
               <Icon size={18} />
               {label}
+              {path === '/admin/trash' && trashTotal > 0 && (
+                <span className="nav-count">{trashTotal}</span>
+              )}
             </NavLink>
           ))}
         </div>

@@ -345,6 +345,7 @@ export function Resources() {
       );
       setSelected([]);
       await reload();
+      window.dispatchEvent(new Event('trash-changed'));
     });
   };
   const tree = (parent: string | null, depth = 0): React.ReactNode =>
@@ -1357,6 +1358,7 @@ export function Trash() {
   const refresh = async () => {
     setSelected([]);
     await reload();
+    window.dispatchEvent(new Event('trash-changed'));
   };
   const relativeTime = (ts: number) => {
     const now = new Date(),
