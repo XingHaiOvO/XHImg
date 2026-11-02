@@ -125,6 +125,11 @@ console.log(image.logicalUrl); // 站内地址，适合保存引用；私有地�
 - 全站：`GET /random`
 - 文件夹：`GET /folders/{id}/random`
 - 自定义：`GET /random/{serviceId}`
+- 自定义别名（任意类型服务）：`GET /random/{slug}`
+
+创建或更新 `/admin/random-services` 时可传可选字段 `slug`，例如 `wallpaper`，调用地址为 `/api/v1/random/wallpaper`。slug 去除首尾空格并转为小写，长度 1–64，只允许字母、数字和中划线，首尾必须是字母或数字；格式错误返回 400，与其他服务 slug 或任何已有服务 ID 重名返回 409。省略字段保留已有值，传空字符串或 `null` 清除。
+
+管理和公开服务列表均返回 `slug`（未配置为 `null`）；配置后 `url` 优先使用 slug 地址。原有全站、文件夹和服务 ID 地址继续有效；更改或清除 slug 后旧别名失效。别名与原地址共享权限、限流和统计，API Key 授权仍使用服务 ID。
 
 `mode=image|redirect|json`，默认采用服务配置（初始为 image）。image 返回实际二进制；redirect 为 302；json 返回图片信息、逻辑地址，以及适用时的临时地址和到期字段。私有 URL 签名默认五分钟、原图缩略图分开授权，检查当前图片权限、签发会话/Key、服务启用状态及来源规则。密钥撤销或图片权限版本改变会使站内签名立即失效；已经签发的 S3 地址仍可能使用至到期，见[图片地址与有效期](#图片地址与有效期)。
 

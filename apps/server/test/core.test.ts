@@ -9,6 +9,216 @@ import sharp from 'sharp';
 import { createApp } from '../src/app.js';
 import { ObjectMissing, type Objects } from '../src/storage.js';
 
+test('random service slugs normalize, validate, preserve omitted values and release old aliases', async () => {
+  const f = await fixture();
+  try {
+    const body = {
+      kind: 'custom',
+      name: 'wallpapers',
+      visibility: 'public',
+      enabled: true,
+      rateLimit: 0,
+    };
+    const created = await f.request('POST', '/api/v1/admin/random-services', {
+      ...body,
+      slug: ' Wallpaper ',
+    });
+    assert.equal(created.statusCode, 201, created.body);
+    const service = created.json();
+    const path = `/api/v1/admin/random-services/${service.id}`;
+    assert.equal(service.slug, 'wallpaper');
+    assert.equal(service.url, '/api/v1/random/wallpaper');
+    for (const slug of ['WALLPAPER', 'global']) {
+      const conflict = await f.request('POST', '/api/v1/admin/random-services', { ...body, slug });
+      assert.equal(conflict.statusCode, 409, conflict.body);
+    }
+    for (const slug of ['-bad', 'bad-', 'bad_slug', 'a/b', 'a b', '中文', 'a'.repeat(65), 1]) {
+      const invalid = await f.request('PUT', path, { ...body, slug });
+      assert.equal(invalid.statusCode, 400, invalid.body);
+    }
+    assert.equal((await f.request('PUT', path, body)).json().slug, 'wallpaper');
+    assert.equal((await f.request('PUT', path, { ...body, slug: 'wallpaper' })).statusCode, 200);
+    const other = await f.request('POST', '/api/v1/admin/random-services', {
+      ...body,
+      slug: 'other',
+    });
+    assert.equal(other.statusCode, 201, other.body);
+    assert.equal((await f.request('PUT', path, { ...body, slug: 'other' })).statusCode, 409);
+    assert.equal(
+      f.ctx.db.one('SELECT slug FROM random_endpoints WHERE id=?', service.id)!.slug,
+      'wallpaper',
+    );
+    const folder = await f.folder('slug images', 'public');
+    assert.equal((await f.upload(folder.id, 'public')).statusCode, 201);
+    assert.equal(
+      (await f.request('PUT', path, { ...body, slug: 'new-wallpaper' })).statusCode,
+      200,
+    );
+    assert.equal(
+      (await f.request('GET', '/api/v1/random/wallpaper?mode=json', undefined, {})).statusCode,
+      404,
+    );
+    assert.equal(
+      (await f.request('GET', '/api/v1/random/new-wallpaper?mode=json', undefined, {})).statusCode,
+      200,
+    );
+    assert.equal(
+      (await f.request('GET', `/api/v1/random/${service.id}?mode=json`, undefined, {})).statusCode,
+      200,
+    );
+    const listed = (await f.request('GET', '/api/v1/public/services', undefined, {}))
+      .json()
+      .items.find((s: any) => s.id === service.id);
+    assert.equal(listed.slug, 'new-wallpaper');
+    assert.equal(listed.url, '/api/v1/random/new-wallpaper');
+    for (const slug of [null, '', '   ']) {
+      const cleared = await f.request('PUT', path, { ...body, slug });
+      assert.equal(cleared.statusCode, 200, cleared.body);
+      assert.equal(cleared.json().slug, null);
+      assert.equal(cleared.json().url, `/api/v1/random/${service.id}`);
+      assert.equal(
+        (await f.request('GET', '/api/v1/random/new-wallpaper?mode=json', undefined, {}))
+          .statusCode,
+        404,
+      );
+      assert.equal(
+        (await f.request('GET', `/api/v1/random/${service.id}?mode=json`, undefined, {}))
+          .statusCode,
+        200,
+      );
+      assert.equal(
+        (await f.request('PUT', path, { ...body, slug: 'new-wallpaper' })).statusCode,
+        200,
+      );
+    }
+    for (const slug of ['x', 'a'.repeat(64), 'wallpaper'])
+      assert.equal((await f.request('PUT', path, { ...body, slug })).statusCode, 200);
+    const adminList = (await f.request('GET', '/api/v1/admin/random-services')).json().items;
+    assert.equal(adminList.find((s: any) => s.id === service.id).slug, 'wallpaper');
+  } finally {
+    await f.close();
+  }
+});
+
+test('all random service kinds support aliases and retain original URLs and response modes', async () => {
+  const f = await fixture();
+  try {
+    const folder = await f.folder('alias sources', 'public');
+    assert.equal((await f.upload(folder.id, 'public')).statusCode, 201);
+    const services = [
+      { id: 'global', kind: 'global', folderId: null, original: '/api/v1/random' },
+      {
+        ...(await f.service(folder.id)),
+        kind: 'folder',
+        folderId: folder.id,
+        original: `/api/v1/folders/${folder.id}/random`,
+      },
+      { ...(await f.service(null, 'public', [], 'custom')), kind: 'custom', folderId: null },
+    ];
+    for (const s of services) {
+      const slug = `${s.kind}-images`;
+      const updated = await f.request('PUT', `/api/v1/admin/random-services/${s.id}`, {
+        kind: s.kind,
+        folderId: s.folderId,
+        name: slug,
+        slug,
+        visibility: 'public',
+        enabled: true,
+        rateLimit: 0,
+      });
+      assert.equal(updated.statusCode, 200, updated.body);
+      assert.equal(updated.json().url, `/api/v1/random/${slug}`);
+      for (const url of [
+        s.original ?? `/api/v1/random/${s.id}`,
+        `/api/v1/random/${s.id}`,
+        updated.json().url,
+      ]) {
+        for (const mode of ['image', 'redirect', 'json']) {
+          const response = await f.request('GET', `${url}?mode=${mode}`, undefined, {});
+          assert.equal(response.statusCode, mode === 'redirect' ? 302 : 200, response.body);
+          if (mode === 'image') assert.match(response.headers['content-type']!, /^image\//);
+          if (mode === 'redirect') assert.ok(response.headers.location);
+          if (mode === 'json') assert.ok(response.json().id);
+        }
+      }
+      assert.equal(f.ctx.db.one('SELECT calls FROM random_endpoints WHERE id=?', s.id)!.calls, 9);
+    }
+  } finally {
+    await f.close();
+  }
+});
+
+test('random slugs share limits and ID-based grants and respect disabled services', async () => {
+  const f = await fixture();
+  try {
+    const folder = await f.folder('private alias');
+    assert.equal((await f.upload(folder.id)).statusCode, 201);
+    const service = await f.service(
+      null,
+      'private',
+      [{ kind: 'source_folder', resourceId: folder.id }],
+      'custom',
+    );
+    const path = `/api/v1/admin/random-services/${service.id}`;
+    const body = {
+      kind: 'custom',
+      folderId: null,
+      name: 'private',
+      slug: 'private-images',
+      enabled: true,
+      rateLimit: 1,
+    };
+    assert.equal((await f.request('PUT', path, body)).statusCode, 200);
+    const url = '/api/v1/random/private-images?mode=json';
+    assert.equal((await f.request('GET', url, undefined, {})).statusCode, 404);
+    const invalidGrant = await f.request('POST', '/api/v1/admin/api-keys', {
+      name: 'slug is not a grant ID',
+      permissions: ['random'],
+      grants: [{ kind: 'service', resourceId: 'private-images' }],
+    });
+    assert.equal(invalidGrant.statusCode, 400, invalidGrant.body);
+    const unrelated = await f.key(
+      ['random', 'read', 'private:read'],
+      [
+        { kind: 'service', resourceId: 'global' },
+        { kind: 'folder', resourceId: folder.id },
+      ],
+    );
+    assert.equal(
+      (await f.request('GET', url, undefined, { authorization: `Bearer ${unrelated.key}` }))
+        .statusCode,
+      404,
+    );
+    const key = await f.key(
+      ['random', 'read', 'private:read'],
+      [
+        { kind: 'service', resourceId: service.id },
+        { kind: 'folder', resourceId: folder.id },
+      ],
+    );
+    const headers = { authorization: `Bearer ${key.key}` };
+    assert.equal((await f.request('GET', url, undefined, headers)).statusCode, 200);
+    assert.equal(
+      (await f.request('GET', `/api/v1/random/${service.id}?mode=json`, undefined, headers))
+        .statusCode,
+      429,
+    );
+    assert.equal(
+      f.ctx.db.one('SELECT calls FROM random_endpoints WHERE id=?', service.id)!.calls,
+      1,
+    );
+    assert.equal((await f.request('PUT', path, { ...body, enabled: false })).statusCode, 200);
+    assert.equal((await f.request('GET', url, undefined, headers)).statusCode, 404);
+    assert.equal(
+      (await f.request('GET', `/api/v1/random/${service.id}?mode=json`, undefined, headers))
+        .statusCode,
+      404,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
 test('zero call limits are unlimited for services and API keys, while positive limits still apply', async () => {
   const f = await fixture();
   try {

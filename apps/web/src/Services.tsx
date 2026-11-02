@@ -18,6 +18,7 @@ const empty = {
   kind: 'custom',
   folderId: null,
   name: '',
+  slug: '',
   description: '',
   visibility: 'private',
   enabled: false,
@@ -173,6 +174,7 @@ function normalize(s: any) {
     kind: s.kind,
     folderId: s.folderId ?? s.folder_id ?? null,
     name: s.name,
+    slug: s.slug ?? '',
     description: s.description ?? '',
     visibility: s.visibility,
     enabled: !!s.enabled,
@@ -236,6 +238,29 @@ function ServiceEditor({ value, close, folders, reload }: any) {
               maxLength={120}
             />
           </Field>
+          <Field
+            label="接口 slug"
+            hint="可选，最多 64 位字母、数字和中划线，首尾需为字母或数字；留空使用原地址。修改后旧 slug 地址将失效。"
+          >
+            <input
+              value={draft.slug}
+              onChange={(e) => patch('slug', e.target.value)}
+              maxLength={64}
+              placeholder="wallpaper"
+            />
+          </Field>
+          <p className="muted">
+            接口地址：
+            <code>
+              {draft.slug.trim()
+                ? `/api/v1/random/${draft.slug.trim().toLowerCase()}`
+                : draft.kind === 'global'
+                  ? '/api/v1/random'
+                  : draft.kind === 'folder'
+                    ? `/api/v1/folders/${draft.folderId ?? '{folderId}'}/random`
+                    : `/api/v1/random/${value?.id ?? '{serviceId}'}`}
+            </code>
+          </p>
           <Field label="描述">
             <textarea
               value={draft.description}

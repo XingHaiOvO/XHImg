@@ -73,6 +73,12 @@ const service = object(
     kind: { type: 'string', enum: ['global', 'folder', 'custom'] },
     folderId: nullable,
     name: string,
+    slug: {
+      ...nullable,
+      maxLength: 64,
+      description:
+        '可选接口别名，去除首尾空格并转为小写；仅字母、数字和中划线，首尾为字母或数字。省略保留原值，空字符串或 null 清除；重复或与服务 ID 冲突返回409。',
+    },
     description: string,
     visibility: vis,
     enabled: boolean,
@@ -332,6 +338,10 @@ export function documentedApi(app: FastifyInstance) {
       if (body)
         op.requestBody = { required: true, content: { 'application/json': { schema: body } } };
       const parameters: any[] = [...(op.parameters ?? [])];
+      if (method === 'get' && path === '/api/v1/random/{serviceId}')
+        for (const p of parameters)
+          if (p.in === 'path' && p.name === 'serviceId')
+            p.description = '随机图服务 ID 或自定义 slug；鉴权、限流和统计均按服务 ID 执行。';
       if (method === 'get' && path.endsWith('/trash-preview'))
         parameters.push(
           parameter('thumbnail', boolean, '优先读取缩略图；缺少缩略图时读取当前图片。'),

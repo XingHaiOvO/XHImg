@@ -17,6 +17,18 @@ const serviceSchema = z.object({
   kind: z.enum(['global', 'folder', 'custom']).default('custom'),
   folderId: z.string().nullable().default(null),
   name,
+  slug: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .max(64)
+    .regex(
+      /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)?$/,
+      'slug 只能包含字母、数字和中划线，首尾必须是字母或数字',
+    )
+    .transform((value) => value || null)
+    .nullable()
+    .optional(),
   description: z.string().max(1000).default(''),
   visibility: visibility.default('private'),
   enabled: z.boolean().default(false),
@@ -124,8 +136,9 @@ export function registerRandom(app: FastifyInstance, ctx: Context) {
       'SELECT kind,resource_id,descendants FROM random_rules WHERE endpoint_id=?',
       e.id,
     ),
-    url:
-      e.kind === 'global'
+    url: e.slug
+      ? `/api/v1/random/${e.slug}`
+      : e.kind === 'global'
         ? '/api/v1/random'
         : e.kind === 'folder'
           ? `/api/v1/folders/${e.folder_id}/random`
@@ -149,6 +162,16 @@ export function registerRandom(app: FastifyInstance, ctx: Context) {
   const save = (sid: string, b: z.infer<typeof serviceSchema>, create: boolean) => {
     validate(b);
     ctx.db.tx(() => {
+      if (
+        b.slug &&
+        ctx.db.one(
+          'SELECT id FROM random_endpoints WHERE (slug=? AND id<>?) OR id=?',
+          b.slug,
+          sid,
+          b.slug,
+        )
+      )
+        fail(409, 'SLUG_CONFLICT', '接口 slug 已被使用或与服务 ID 冲突');
       if (create)
         ctx.db.run(
           'INSERT INTO random_endpoints (id,kind,folder_id,name,description,visibility,enabled,mode,include_children,rate_limit) VALUES (?,?,?,?,?,?,?,?,?,?)',
@@ -176,6 +199,8 @@ export function registerRandom(app: FastifyInstance, ctx: Context) {
           b.rateLimit,
           sid,
         );
+      if (b.slug !== undefined)
+        ctx.db.run('UPDATE random_endpoints SET slug=? WHERE id=?', b.slug, sid);
       ctx.db.run('DELETE FROM random_rules WHERE endpoint_id=?', sid);
       for (const r of b.rules)
         ctx.db.run(
@@ -224,6 +249,7 @@ export function registerRandom(app: FastifyInstance, ctx: Context) {
           name: e.name,
           description: e.description,
           kind: e.kind,
+          slug: e.slug,
           url: out.url,
           folderId: e.folder_id,
         };
@@ -237,7 +263,9 @@ export function registerRandom(app: FastifyInstance, ctx: Context) {
   ) => {
     const endpoint = folderId
       ? ctx.db.one("SELECT * FROM random_endpoints WHERE folder_id=? AND kind='folder'", folderId)
-      : ctx.db.one('SELECT * FROM random_endpoints WHERE id=?', sid ?? 'global');
+      : sid
+        ? ctx.db.one('SELECT * FROM random_endpoints WHERE id=? OR slug=?', sid, sid)
+        : ctx.db.one("SELECT * FROM random_endpoints WHERE id='global'");
     if (!endpoint || !endpoint.enabled) fail(404, 'NOT_FOUND', '随机图服务不存在或未启用');
     const actor = ctx.actor(req);
     if (endpoint.visibility !== 'public' && !ctx.access.service(actor, endpoint))
