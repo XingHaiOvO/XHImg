@@ -275,15 +275,24 @@ test('S3 random json and redirect use direct links while image mode still stream
       visibility: 'public',
       rateLimit: 0,
     });
+    const beforeJson = { ...f.remote.counts };
     const json = await f.req('GET', '/api/v1/random?mode=json', undefined, {});
     assert.equal(json.statusCode, 200, json.body);
+    assert.equal(f.remote.counts.head - beforeJson.head, 1);
+    assert.equal(f.remote.counts.get - beforeJson.get, 0);
     assert(json.json().urlExpiresAt);
     assert.deepEqual(await bytes(json.json().url), f.png);
+    const beforeRedirect = { ...f.remote.counts };
     const redirect = await f.req('GET', '/api/v1/random?mode=redirect', undefined, {});
     assert.equal(redirect.statusCode, 302);
+    assert.equal(f.remote.counts.head - beforeRedirect.head, 1);
+    assert.equal(f.remote.counts.get - beforeRedirect.get, 0);
     assert(redirect.headers.location!.startsWith(f.remote.endpoint));
+    const beforeImage = { ...f.remote.counts };
     const stream = await f.req('GET', '/api/v1/random?mode=image', undefined, {});
     assert.equal(stream.statusCode, 200);
+    assert.equal(f.remote.counts.head - beforeImage.head, 0);
+    assert.equal(f.remote.counts.get - beforeImage.get, 1);
     assert.deepEqual(stream.rawPayload, f.png);
     assert.equal(stream.headers['cache-control'], 'private, no-store');
     const service = f.ctx.db.one('SELECT * FROM random_endpoints WHERE id=?', 'global')!;

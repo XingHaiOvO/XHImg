@@ -238,7 +238,8 @@ export class Context {
       ).includes(image.folder_id)
     )
       return false;
-    for (const rule of this.db.all('SELECT * FROM random_rules WHERE endpoint_id=?', endpoint.id)) {
+    const rules = this.db.all('SELECT * FROM random_rules WHERE endpoint_id=?', endpoint.id);
+    for (const rule of rules) {
       if (rule.kind === 'exclude_image' && rule.resource_id === image.id) return false;
       if (
         rule.kind === 'exclude_folder' &&
@@ -250,10 +251,7 @@ export class Context {
         return false;
       if (rule.kind === 'tag' && !JSON.parse(image.tags).includes(rule.resource_id)) return false;
     }
-    const sources = this.db.all(
-      "SELECT * FROM random_rules WHERE endpoint_id=? AND kind='source_folder'",
-      endpoint.id,
-    );
+    const sources = rules.filter((rule) => rule.kind === 'source_folder');
     return (
       !sources.length ||
       sources.some((rule) =>

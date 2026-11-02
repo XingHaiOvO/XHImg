@@ -771,6 +771,9 @@ test('missing random object is excluded, transient storage errors are 503, trash
       head: async () => {
         throw new Error('network down');
       },
+      get: async () => {
+        throw new Error('network down');
+      },
     } as any);
     assert.equal((await f.request('GET', s.url, undefined, {})).statusCode, 503);
     f.ctx.storage.instances.set('local', real);

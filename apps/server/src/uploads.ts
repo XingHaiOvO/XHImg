@@ -6,11 +6,31 @@ import { pipeline } from 'node:stream/promises';
 import { z } from 'zod';
 import { Context, params, query, visibility } from './context.js';
 import { fail, id } from './security.js';
-import { ObjectMissing } from './storage.js';
+import { ObjectMissing, type Objects } from './storage.js';
+import type { Row } from './db.js';
 import { acceptFile, prepareUpload } from './pipeline.js';
 import { uploadLimit } from './policies.js';
 import { imageFilename } from './image-filename.js';
 import { imageResponse, signObject, sameImageLocation } from './image-urls.js';
+
+// The caller owns authorization and the object stream until it is handed off here.
+export function sendImageObject(
+  reply: FastifyReply,
+  image: Row,
+  object: Awaited<ReturnType<Objects['get']>>,
+  thumbnail = false,
+) {
+  const variant = thumbnail ? 'thumbnail' : 'original';
+  reply
+    .header('ETag', `"${image.checksum}-${image.access_version}-${variant}"`)
+    .header('Content-Type', thumbnail ? 'image/webp' : image.mime)
+    .header('Content-Length', object.size);
+  reply.header(
+    'Content-Disposition',
+    `inline; filename*=UTF-8''${encodeURIComponent(imageFilename(basename(image.name).replace(/[\r\n]/g, ''), thumbnail ? 'webp' : image.format))}`,
+  );
+  return reply.send(object.stream);
+}
 
 export async function sendImage(
   ctx: Context,
@@ -66,15 +86,7 @@ export async function sendImage(
     const object = await ctx.storage
       .byId(image.storage_id)
       .get(thumbnail ? image.thumb_key : image.object_key);
-    reply
-      .header('ETag', etag)
-      .header('Content-Type', thumbnail ? 'image/webp' : image.mime)
-      .header('Content-Length', object.size);
-    reply.header(
-      'Content-Disposition',
-      `inline; filename*=UTF-8''${encodeURIComponent(imageFilename(basename(image.name).replace(/[\r\n]/g, ''), thumbnail ? 'webp' : image.format))}`,
-    );
-    return reply.send(object.stream);
+    return sendImageObject(reply, image, object, thumbnail);
   } catch (e) {
     if (e instanceof ObjectMissing) {
       if (!sameImageLocation(image, ctx.image(image.id)))

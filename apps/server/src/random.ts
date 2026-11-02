@@ -1,12 +1,12 @@
-import { imageResponse } from './image-urls.js';
+import { imageResponse, sameImageLocation } from './image-urls.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { randomInt } from 'node:crypto';
 import { z } from 'zod';
 import { Context, params, query, name, visibility } from './context.js';
 import { fail, id, type Actor } from './security.js';
-import { ObjectMissing } from './storage.js';
+import { ObjectMissing, type Objects } from './storage.js';
 import type { Row } from './db.js';
-import { sendImage } from './uploads.js';
+import { sendImageObject } from './uploads.js';
 const mode = z.enum(['image', 'redirect', 'json']);
 const rule = z.object({
   kind: z.enum(['source_folder', 'exclude_folder', 'exclude_image', 'tag']),
@@ -88,7 +88,7 @@ export function candidateIds(ctx: Context, endpoint: Row, actor: Actor) {
     }
   }
   const ids = ctx.db
-    .all(`SELECT id FROM images WHERE ${where.join(' AND ')} ORDER BY id`, ...args)
+    .all(`SELECT id FROM images WHERE ${where.join(' AND ')}`, ...args)
     .map((x) => x.id as string);
   const bytes = ids.length * 100;
   if (bytes <= 16 * 1024 * 1024) {
@@ -101,6 +101,21 @@ export function candidateIds(ctx: Context, endpoint: Row, actor: Actor) {
     ctx.candidates.set(cacheKey, { revision: ctx.access.revision, ids, bytes });
   }
   return ids;
+}
+
+// A sparse Fisher-Yates shuffle: O(limit) space, without copying or mutating
+// the shared candidate cache. Every remaining index has equal probability.
+export function* sampleCandidates(ids: readonly string[], limit = 3) {
+  const swaps = new Map<number, number>();
+  let remaining = ids.length;
+  for (let attempt = 0; attempt < limit && remaining; attempt++) {
+    const index = randomInt(remaining);
+    const selected = swaps.get(index) ?? index;
+    remaining--;
+    swaps.set(index, swaps.get(remaining) ?? remaining);
+    swaps.delete(remaining);
+    yield ids[selected]!;
+  }
 }
 export function registerRandom(app: FastifyInstance, ctx: Context) {
   const info = (e: Row) => ({
@@ -244,14 +259,11 @@ export function registerRandom(app: FastifyInstance, ctx: Context) {
       Date.now(),
       endpoint.id,
     );
+    let object: Awaited<ReturnType<Objects['get']>> | undefined;
     try {
-      const candidates = [...candidateIds(ctx, endpoint, actor)];
+      const candidates = candidateIds(ctx, endpoint, actor);
       let image: Row | undefined;
-      for (let attempt = 0; attempt < 3 && candidates.length; attempt++) {
-        const index = randomInt(candidates.length),
-          imageId = candidates[index]!;
-        candidates[index] = candidates[candidates.length - 1]!;
-        candidates.pop();
+      for (const imageId of sampleCandidates(candidates)) {
         const item = ctx.image(imageId);
         if (
           !ctx.access.read(actor, item) ||
@@ -260,11 +272,15 @@ export function registerRandom(app: FastifyInstance, ctx: Context) {
         )
           continue;
         try {
-          await ctx.storage.byId(item.storage_id).head(item.object_key);
+          const storage = ctx.storage.byId(item.storage_id);
+          if (responseMode === 'image') object = await storage.get(item.object_key);
+          else await storage.head(item.object_key);
           image = item;
           break;
         } catch (e) {
           if (e instanceof ObjectMissing) {
+            if (!sameImageLocation(item, ctx.image(item.id)))
+              fail(409, 'IMAGE_CHANGED', '图片状态已变化，请重试');
             ctx.db.run("UPDATE images SET state='missing' WHERE id=?", item.id);
             ctx.invalidate();
           } else fail(503, 'STORAGE_UNAVAILABLE', '存储暂不可用');
@@ -272,14 +288,9 @@ export function registerRandom(app: FastifyInstance, ctx: Context) {
       }
       if (!image) fail(404, 'NO_CANDIDATES', '没有符合条件的可用图片');
       // Refresh after storage I/O so a permission change cannot reuse an old row.
+      const selectedImage = image;
       image = ctx.image(image.id);
       const latestActor = ctx.actor(req);
-      if (
-        !ctx.access.read(latestActor, image) ||
-        !ctx.matches(endpoint, image) ||
-        (endpoint.visibility === 'public' && image.effective_visibility !== 'public')
-      )
-        fail(404, 'NO_CANDIDATES', '图片权限已变化，请重试');
       const currentEndpoint = ctx.db.one(
         'SELECT * FROM random_endpoints WHERE id=? AND enabled=1',
         endpoint.id,
@@ -290,20 +301,30 @@ export function registerRandom(app: FastifyInstance, ctx: Context) {
           !ctx.access.service(latestActor, currentEndpoint))
       )
         fail(404, 'NOT_FOUND', '服务已变更');
-      const info =
-        responseMode === 'image'
-          ? undefined
-          : await imageResponse(ctx, image, latestActor, { serviceId: endpoint.id });
-      const urls = info
-        ? {
-            url: info.url,
-            thumbnailUrl: info.thumbnailUrl,
-            logicalUrl: info.logicalUrl,
-            logicalThumbnailUrl: info.logicalThumbnailUrl,
-            urlExpiresAt: info.urlExpiresAt,
-            thumbnailUrlExpiresAt: info.thumbnailUrlExpiresAt,
-          }
-        : ctx.urls(image, latestActor, endpoint.id);
+      if (
+        !ctx.access.read(latestActor, image) ||
+        !ctx.matches(currentEndpoint, image) ||
+        (currentEndpoint.visibility === 'public' && image.effective_visibility !== 'public')
+      )
+        fail(404, 'NO_CANDIDATES', '图片权限已变化，请重试');
+      if (!sameImageLocation(selectedImage, image))
+        fail(409, 'IMAGE_CHANGED', '图片状态已变化，请重试');
+      if (object) {
+        reply.header('Vary', 'Cookie, Authorization');
+        ctx.db.run('UPDATE random_endpoints SET successes=successes+1 WHERE id=?', endpoint.id);
+        const response = sendImageObject(reply, image, object);
+        object = undefined;
+        return response;
+      }
+      const info = await imageResponse(ctx, image, latestActor, { serviceId: endpoint.id });
+      const urls = {
+        url: info.url,
+        thumbnailUrl: info.thumbnailUrl,
+        logicalUrl: info.logicalUrl,
+        logicalThumbnailUrl: info.logicalThumbnailUrl,
+        urlExpiresAt: info.urlExpiresAt,
+        thumbnailUrlExpiresAt: info.thumbnailUrlExpiresAt,
+      };
       ctx.db.run('UPDATE random_endpoints SET successes=successes+1 WHERE id=?', endpoint.id);
       if (responseMode === 'json')
         return {
@@ -315,11 +336,12 @@ export function registerRandom(app: FastifyInstance, ctx: Context) {
           size: image.size,
           thumbnailState: image.thumbnail_state,
         };
-      if (responseMode === 'redirect') return reply.code(302).header('Location', urls.url).send();
-      return sendImage(ctx, req, reply, image.id, false, true);
+      return reply.code(302).header('Location', urls.url).send();
     } catch (e) {
       ctx.db.run('UPDATE random_endpoints SET failures=failures+1 WHERE id=?', endpoint.id);
       throw e;
+    } finally {
+      object?.stream.destroy();
     }
   };
   app.get('/api/v1/random', async (req, reply) => serve(req, reply));
