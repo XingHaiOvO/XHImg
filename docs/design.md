@@ -67,6 +67,8 @@ erDiagram
 
 存储迁移使用 `storage_migrations`、`migration_items` 和 `migration_objects` 保存冻结清单、进度、版本快照、目标位置与源副本引用。上图展示主要基础关系，不是完整数据库表清单。
 
+`random_endpoints.slug` 为可空、唯一的调用别名，全站、文件夹及自定义服务均可配置。`/api/v1/random/{serviceId}` 可按 ID 或 slug 定位同一服务；鉴权、候选缓存、限流、统计及签名仍绑定服务 ID。返回的服务 `url` 优先使用 slug，原调用地址继续有效；别名修改或清除不保留旧别名重定向。
+
 ## 权限与数据流
 
 ```mermaid
