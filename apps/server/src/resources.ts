@@ -4,8 +4,9 @@ import { z } from 'zod';
 import { Context, params, query, paging, name, visibility } from './context.js';
 import { fail, id } from './security.js';
 import { ObjectMissing, s3ConfigSchema } from './storage.js';
-import { policyPatch } from './policies.js';
+import { mediaTypeSchema, policyPatch } from './policies.js';
 import { migrationStorageUsed, assertNotMigrating } from './migrations.js';
+import { sendVideo } from './uploads.js';
 
 const folderBody = z.object({
   name,
@@ -155,6 +156,8 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
       q.trash === 'true' && !publicOnly ? 'deleted_at IS NOT NULL' : 'deleted_at IS NULL',
     ];
     const args: any[] = [];
+    const mediaType = mediaTypeSchema.optional().parse(q.mediaType);
+    if (mediaType) conditions.push(mediaType === 'video' ? "format='mp4'" : "format<>'mp4'");
     if (actor.type !== 'admin') {
       conditions.push("state='ready'", 'publication_hold=0');
       if (
@@ -350,13 +353,30 @@ export function registerResources(app: FastifyInstance, ctx: Context) {
     ctx.admin(req);
     const image = ctx.image(params(req).id!);
     if (!image.deleted_at || image.state === 'purging') fail(404, 'NOT_FOUND', '回收站图片不可用');
-    let thumbnail = query(req).thumbnail === 'true' && image.thumbnail_state === 'ready';
+    const wantsThumbnail = query(req).thumbnail === 'true';
+    let thumbnail = wantsThumbnail && image.thumbnail_state === 'ready';
     try {
+      if (image.format === 'mp4') {
+        if (!wantsThumbnail)
+          return await sendVideo(
+            ctx,
+            req,
+            reply.header('Cache-Control', 'private, no-store'),
+            image,
+            (latest) => {
+              ctx.admin(req);
+              if (!latest.deleted_at || latest.state === 'purging')
+                fail(404, 'NOT_FOUND', '回收站视频不可用');
+            },
+          );
+        if (!thumbnail) fail(404, 'THUMBNAIL_PENDING', '视频封面暂未就绪');
+      }
       const storage = ctx.storage.byId(image.storage_id);
       const object = await storage
         .get(thumbnail ? image.thumb_key : image.object_key)
         .catch((error) => {
-          if (!(error instanceof ObjectMissing) || !thumbnail) throw error;
+          if (!(error instanceof ObjectMissing) || !thumbnail || image.format === 'mp4')
+            throw error;
           thumbnail = false;
           return storage.get(image.object_key);
         });

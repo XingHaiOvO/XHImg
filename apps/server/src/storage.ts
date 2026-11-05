@@ -26,10 +26,15 @@ export interface DownloadLink {
   url: string;
   expiresAt: number;
 }
+export type ObjectRange = { start: number; end: number; total: number };
 
 export interface Objects {
   put(key: string, path: string, mime: string, signal?: AbortSignal): Promise<void>;
-  get(key: string, signal?: AbortSignal): Promise<{ stream: Readable; size: number }>;
+  get(
+    key: string,
+    signal?: AbortSignal,
+    range?: ObjectRange,
+  ): Promise<{ stream: Readable; size: number }>;
   head(key: string, signal?: AbortSignal): Promise<number>;
   delete(key: string, signal?: AbortSignal): Promise<void>;
   test(): Promise<void>;
@@ -80,9 +85,13 @@ export class LocalObjects implements Objects {
       throw e;
     }
   }
-  async get(key: string, signal?: AbortSignal) {
+  async get(key: string, signal?: AbortSignal, range?: ObjectRange) {
     const size = await this.head(key, signal);
-    return { stream: createReadStream(this.path(key), { signal }), size };
+    if (range && range.total !== size) fail(409, 'IMAGE_CHANGED', '视频文件已变化，请重试');
+    return {
+      stream: createReadStream(this.path(key), { signal, start: range?.start, end: range?.end }),
+      size: range ? range.end - range.start + 1 : size,
+    };
   }
   async delete(key: string, signal?: AbortSignal) {
     signal?.throwIfAborted();
@@ -151,13 +160,26 @@ export class S3Objects implements Objects {
       throw e;
     }
   }
-  async get(key: string, signal?: AbortSignal) {
+  async get(key: string, signal?: AbortSignal, range?: ObjectRange) {
     try {
       const out = await this.client.send(
-        new GetObjectCommand({ Bucket: this.config.bucket, Key: key }),
+        new GetObjectCommand({
+          Bucket: this.config.bucket,
+          Key: key,
+          ...(range ? { Range: `bytes=${range.start}-${range.end}` } : {}),
+        }),
         { abortSignal: signal },
       );
-      return { stream: out.Body as Readable, size: out.ContentLength ?? 0 };
+      const stream = out.Body as Readable;
+      if (
+        range &&
+        (out.ContentRange !== `bytes ${range.start}-${range.end}/${range.total}` ||
+          out.ContentLength !== range.end - range.start + 1)
+      ) {
+        stream.destroy();
+        fail(503, 'STORAGE_RANGE_UNAVAILABLE', '存储未返回正确的视频字节范围');
+      }
+      return { stream, size: out.ContentLength ?? 0 };
     } catch (e: any) {
       if (e.$metadata?.httpStatusCode === 404) throw new ObjectMissing();
       throw e;
@@ -226,7 +248,7 @@ export class Storage {
       wrapped = new Proxy(raw, {
         get: (target, property) => {
           if (property === 'get')
-            return async (key: string, signal?: AbortSignal) => {
+            return async (key: string, signal?: AbortSignal, range?: ObjectRange) => {
               const ref = storageId + '\0' + key;
               if (this.deleting.has(ref)) throw new ObjectInUse('对象正在清理');
               this.readers.set(ref, (this.readers.get(ref) ?? 0) + 1);
@@ -239,7 +261,7 @@ export class Storage {
                 else this.readers.delete(ref);
               };
               try {
-                const body = await target.get(key, signal);
+                const body = await target.get(key, signal, range);
                 body.stream.once('end', release).once('close', release).once('error', release);
                 if (body.stream.destroyed || body.stream.readableEnded) release();
                 return body;

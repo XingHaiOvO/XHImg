@@ -23,7 +23,7 @@ export function ManualClassification({
     [page, setPage] = useState(1),
     [selected, setSelected] = useState<string[]>([]);
   const result = useData<{ items: ImageInfo[]; total: number }>(
-    `admin/images?${new URLSearchParams({ folderId: folder, search, page: String(page) })}`,
+    `admin/images?${new URLSearchParams({ mediaType: 'image', folderId: folder, search, page: String(page) })}`,
   );
   const action = useAction(),
     notice = useNotice();

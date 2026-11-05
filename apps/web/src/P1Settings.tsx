@@ -7,11 +7,13 @@ export function ProcessingSettings() {
   const config = useData('admin/processing'),
     [policy, setPolicy] = useState<any>(processingDefaults),
     [limit, setLimit] = useState(100),
+    [videoLimit, setVideoLimit] = useState(500),
     action = useAction();
   useEffect(() => {
     if (config.data) {
       setPolicy(config.data.policy);
       setLimit(config.data.maxUploadMB);
+      setVideoLimit(config.data.maxVideoUploadMB ?? 500);
     }
   }, [config.data]);
   if (config.loading) return <Busy />;
@@ -34,7 +36,10 @@ export function ProcessingSettings() {
         onSubmit={(e) => {
           e.preventDefault();
           void action.run(() =>
-            api('admin/processing', json('PUT', { policy, maxUploadMB: limit })),
+            api(
+              'admin/processing',
+              json('PUT', { policy, maxUploadMB: limit, maxVideoUploadMB: videoLimit }),
+            ),
           );
         }}
       >
@@ -50,6 +55,16 @@ export function ProcessingSettings() {
               required
               value={limit}
               onChange={(e) => setLimit(Number(e.target.value))}
+            />
+          </Field>
+          <Field label="单个 MP4 上限（MiB）" hint="1–1024 MiB，视频原样保存并自动生成封面。">
+            <input
+              type="number"
+              min="1"
+              max="1024"
+              required
+              value={videoLimit}
+              onChange={(e) => setVideoLimit(Number(e.target.value))}
             />
           </Field>
           <ProcessingEditor value={policy} onChange={setPolicy} />

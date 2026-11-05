@@ -11,6 +11,7 @@ import {
   FolderOpen,
   ImageOff,
   Aperture,
+  Play,
 } from 'lucide-react';
 import { api, useData, useNotice, copy, absolute, bytes } from './api';
 import { Pagination, Button, Busy, Modal } from './components/ui';
@@ -71,6 +72,7 @@ export function Thumbnail({
   previewHint?: boolean;
 }) {
   const thumbnail = useThumbnailSource(image);
+  const video = image.format === 'mp4';
   return (
     <button
       className="image-thumb"
@@ -78,7 +80,7 @@ export function Thumbnail({
       aria-disabled={disabled || undefined}
       onClick={() => {
         if (disabled) return;
-        if (thumbnail.canRetry) thumbnail.retry();
+        if (!video && thumbnail.canRetry) thumbnail.retry();
         else onClick?.();
       }}
       style={
@@ -89,8 +91,10 @@ export function Thumbnail({
     >
       {thumbnail.unavailable ? (
         <span className="thumb-placeholder">
-          <ImageOff size={24} />
-          <small>{thumbnail.canRetry ? '加载失败，点击重试' : '预览暂未就绪'}</small>
+          {video ? <Play size={24} /> : <ImageOff size={24} />}
+          <small>
+            {video ? '播放视频' : thumbnail.canRetry ? '加载失败，点击重试' : '预览暂未就绪'}
+          </small>
         </span>
       ) : (
         <img
@@ -101,14 +105,43 @@ export function Thumbnail({
           onLoad={thumbnail.onLoad}
         />
       )}
+      {video && (
+        <span className="thumbnail-video-badge" aria-hidden="true">
+          <Play size={12} /> 视频
+        </span>
+      )}
       {previewHint && !thumbnail.unavailable && (
         <span className="thumbnail-preview-hint" aria-hidden="true">
-          查看大图
+          {video ? '播放视频' : '查看大图'}
         </span>
       )}
     </button>
   );
 }
+function VideoPreview({ source, image }: { source: string; image: Partial<ImageInfo> }) {
+  const [failed, setFailed] = useState(false);
+  if (failed)
+    return (
+      <div className="empty" role="alert">
+        <p>视频加载失败</p>
+        <Button variant="secondary" onClick={() => setFailed(false)}>
+          重试播放
+        </Button>
+      </div>
+    );
+  return (
+    <video
+      src={source}
+      poster={image.thumbnailState === 'ready' ? image.thumbnailUrl : undefined}
+      controls
+      playsInline
+      preload="metadata"
+      aria-label={image.name ?? '视频预览'}
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 export function Preview({
   image,
   close,
@@ -120,6 +153,7 @@ export function Preview({
 }) {
   const notice = useNotice();
   const link = useImageSource(image ?? {});
+  const video = image?.format === 'mp4';
   return (
     <Modal
       open={!!image}
@@ -131,7 +165,9 @@ export function Preview({
       {image && (
         <>
           <div className="preview-image">
-            {link.failed ? (
+            {video ? (
+              <VideoPreview key={link.source} source={link.source} image={image} />
+            ) : link.failed ? (
               <div className="empty" role="alert">
                 <ImageOff size={28} />
                 <p>图片加载失败</p>
@@ -172,7 +208,7 @@ export function Preview({
               disabled={!!image.urlExpiresAt && image.urlExpiresAt <= Date.now()}
               onClick={() =>
                 void copy(absolute(image.url ?? `/i/${image.id}`))
-                  .then(() => notice('图片地址已复制'))
+                  .then(() => notice(video ? '视频地址已复制' : '图片地址已复制'))
                   .catch(() => notice('复制失败，请手动复制', true))
               }
             >
@@ -193,7 +229,7 @@ export function Preview({
             )}
             <Button asChild variant="ghost">
               <a href={link.source} target="_blank" rel="noreferrer">
-                打开原图 <ArrowUpRight size={15} />
+                {video ? '打开视频' : '打开原图'} <ArrowUpRight size={15} />
               </a>
             </Button>
           </div>
@@ -517,6 +553,8 @@ export function Gallery() {
   const folders = useData('public/folders');
   const [params, setParams] = useSearchParams();
   const folder = params.get('folderId') ?? '';
+  const requestedType = params.get('mediaType');
+  const mediaType = requestedType === 'image' || requestedType === 'video' ? requestedType : '';
   const filter = params.get('search') ?? '';
   const requestedSort = params.get('sort') ?? 'newest';
   const sort = ['newest', 'oldest', 'name'].includes(requestedSort) ? requestedSort : 'newest';
@@ -545,7 +583,7 @@ export function Gallery() {
     );
   };
   const { data, error, loading } = useData(
-    `public/images?${new URLSearchParams({ folderId: folder, search: filter, sort, page: String(page) })}`,
+    `public/images?${new URLSearchParams({ folderId: folder, search: filter, sort, page: String(page), ...(mediaType ? { mediaType } : {}) })}`,
   );
   return (
     <main className="public-main gallery-page">
@@ -554,7 +592,7 @@ export function Gallery() {
           <h1>公开图库</h1>
           <p className="muted">一些图片，一点灵感。</p>
         </div>
-        <span className="count">{data?.total ?? 0} 张图片</span>
+        <span className="count">{data?.total ?? 0} 项资源</span>
       </div>
       <div className="toolbar">
         <label className="search-input">
@@ -589,6 +627,15 @@ export function Gallery() {
           ))}
         </select>
         <select
+          aria-label="筛选媒体类型"
+          value={mediaType}
+          onChange={(e) => updateParams({ mediaType: e.target.value, search, page: '1' })}
+        >
+          <option value="">图片和视频</option>
+          <option value="image">仅图片</option>
+          <option value="video">仅视频</option>
+        </select>
+        <select
           aria-label="图片排序"
           value={sort}
           onChange={(e) => {
@@ -599,12 +646,12 @@ export function Gallery() {
           <option value="oldest">最早上传</option>
           <option value="name">按名称</option>
         </select>
-        {(folder || search || filter) && (
+        {(folder || search || filter || mediaType) && (
           <Button
             variant="ghost"
             onClick={() => {
               setSearch('');
-              updateParams({ search: '', folderId: '', sort: 'newest', page: '1' });
+              updateParams({ search: '', folderId: '', mediaType: '', sort: 'newest', page: '1' });
             }}
           >
             清除筛选
@@ -621,7 +668,13 @@ export function Gallery() {
             <article key={image.id} className="gallery-item">
               <Thumbnail
                 image={{ ...image, name: image.description || '图片预览' }}
-                actionLabel={image.description ? `查看图片：${image.description}` : '查看图片'}
+                actionLabel={
+                  image.format === 'mp4'
+                    ? `播放视频：${image.description || image.name}`
+                    : image.description
+                      ? `查看图片：${image.description}`
+                      : '查看图片'
+                }
                 previewHint
                 onClick={() => setPreview(image)}
               />
@@ -631,7 +684,7 @@ export function Gallery() {
       ) : (
         <div className="empty">
           <Images size={36} />
-          <h3>还没有符合条件的图片</h3>
+          <h3>还没有符合条件的资源</h3>
           <p>换个文件夹，或稍后再来看看。</p>
         </div>
       )}

@@ -1,4 +1,5 @@
 import { basename } from 'node:path';
+import { stat } from 'node:fs/promises';
 import type { Context } from './context.js';
 import { fail, id, type Actor } from './security.js';
 import {
@@ -8,8 +9,11 @@ import {
   persistedActor,
   checkUpload,
   uploadLimit,
+  fileHash,
+  type MediaType,
 } from './policies.js';
 import { enqueueClassification, wantsClassification } from './organization.js';
+import { inspectMp4 } from './video.js';
 
 export interface UploadOptions {
   folderId?: string;
@@ -17,6 +21,7 @@ export interface UploadOptions {
   storageId?: string;
   processing?: unknown;
   classify?: boolean;
+  mediaType?: MediaType;
 }
 export function uploadIdentity(actor: Actor) {
   if (actor.type === 'anonymous') fail(401, 'UPLOAD_AUTH_REQUIRED', '请先授权上传');
@@ -35,8 +40,10 @@ export function prepareUpload(ctx: Context, actor: Actor, options: UploadOptions
     !ctx.db.one('SELECT id FROM storage_backends WHERE id=? AND enabled=1', storageId)
   )
     fail(503, 'STORAGE_DISABLED', '目标存储不可用');
-  const policy = resolvePolicy(ctx, folderId, options.processing);
-  const classify = wantsClassification(ctx, actor, options.classify, !!options.folderId);
+  const video = options.mediaType === 'video';
+  const policy = resolvePolicy(ctx, folderId, video ? undefined : options.processing);
+  if (video) policy.enabled = false;
+  const classify = !video && wantsClassification(ctx, actor, options.classify, !!options.folderId);
   return {
     folderId,
     storageId,
@@ -54,9 +61,15 @@ export async function acceptFile(
   options: UploadOptions,
   existingId?: string,
 ) {
-  const prepared = prepareUpload(ctx, actor, options),
-    info = await imageWork(() => inspectImage(path));
-  if (info.size > uploadLimit(ctx)) fail(413, 'FILE_TOO_LARGE', '文件超过当前上传上限');
+  const prepared = prepareUpload(ctx, actor, options);
+  const { size } = await stat(path);
+  if (size > uploadLimit(ctx, options.mediaType))
+    fail(413, 'FILE_TOO_LARGE', '文件超过当前上传上限');
+  const info = await imageWork(async () =>
+    options.mediaType === 'video'
+      ? { ...(await inspectMp4(path)), size, checksum: await fileHash(path) }
+      : inspectImage(path),
+  );
   const shouldProcess = prepared.policy.enabled && info.format !== 'gif';
   const hold = shouldProcess || prepared.classify;
   const uploadId = existingId ?? id('upl'),

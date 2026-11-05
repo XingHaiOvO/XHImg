@@ -11,6 +11,7 @@ import { imageWork } from './policies.js';
 import { finalizeUpload, expireResumable } from './resumable.js';
 import { MigrationWorker, purgeMigrationCopies } from './migration-worker.js';
 import { objectProtected } from './migrations.js';
+import { videoPoster } from './video.js';
 
 export class Worker {
   busy = false;
@@ -85,12 +86,19 @@ export class Worker {
               try {
                 const object = await adapter.get(image.object_key);
                 await pipeline(object.stream, createWriteStream(tmp));
-                await imageWork(() =>
-                  sharp(tmp, { limitInputPixels: 40_000_000 })
-                    .rotate()
-                    .resize({ width: 640, height: 640, fit: 'inside', withoutEnlargement: true })
-                    .webp({ quality: 80 })
-                    .toFile(out),
+                await imageWork<void | sharp.OutputInfo>(() =>
+                  image.format === 'mp4'
+                    ? videoPoster(tmp, out)
+                    : sharp(tmp, { limitInputPixels: 40_000_000 })
+                        .rotate()
+                        .resize({
+                          width: 640,
+                          height: 640,
+                          fit: 'inside',
+                          withoutEnlargement: true,
+                        })
+                        .webp({ quality: 80 })
+                        .toFile(out),
                 );
                 await adapter.put(image.thumb_key, out, 'image/webp');
                 db.run("UPDATE images SET thumbnail_state='ready' WHERE id=?", image.id);
@@ -144,7 +152,8 @@ export class Worker {
           }
           if (job.kind === 'finalize')
             db.run(
-              "UPDATE upload_sessions SET state='failed',error='文件校验或存储失败，请检查后重试' WHERE id=?",
+              "UPDATE upload_sessions SET state='failed',error=? WHERE id=?",
+              error instanceof HttpError ? error.message : '文件校验或存储失败，请检查后重试',
               JSON.parse(job.payload).sessionId,
             );
         }

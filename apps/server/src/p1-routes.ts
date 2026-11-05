@@ -22,19 +22,26 @@ export function registerP1(app: FastifyInstance, ctx: Context) {
   app.get('/api/v1/admin/processing', async () => ({
     policy: { ...defaultPolicy, ...ctx.db.setting('processing', {}) },
     maxUploadMB: ctx.db.setting('maxUploadMB', 100),
+    maxVideoUploadMB: ctx.db.setting('maxVideoUploadMB', 500),
   }));
   app.put('/api/v1/admin/processing', async (req) => {
     const b = z
-      .object({ policy: policyPatch, maxUploadMB: z.number().int().min(1).max(100) })
+      .object({
+        policy: policyPatch,
+        maxUploadMB: z.number().int().min(1).max(100),
+        maxVideoUploadMB: z.number().int().min(1).max(1024).optional(),
+      })
       .parse(req.body);
     ctx.db.tx(() => {
       ctx.db.set('processing', { ...defaultPolicy, ...b.policy });
       ctx.db.set('maxUploadMB', b.maxUploadMB);
+      if (b.maxVideoUploadMB !== undefined) ctx.db.set('maxVideoUploadMB', b.maxVideoUploadMB);
     });
     return { ok: true };
   });
   app.get('/api/v1/public/upload-config', async () => ({
     maxUploadMB: ctx.db.setting('maxUploadMB', 100),
+    maxVideoUploadMB: ctx.db.setting('maxVideoUploadMB', 500),
   }));
   app.post('/api/v1/admin/images/:id/reprocess', async (req) => {
     const image = ctx.image(params(req).id!),
@@ -141,6 +148,7 @@ export function registerP1(app: FastifyInstance, ctx: Context) {
           b.skipUnavailable &&
           (!image ||
             image.deleted_at ||
+            image.format === 'mp4' ||
             image.state !== 'ready' ||
             ['pending', 'processing'].includes(image.processing_status) ||
             ['pending', 'running'].includes(image.classification_status))

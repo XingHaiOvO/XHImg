@@ -90,7 +90,8 @@ export async function createApp(config: Config) {
       cb(null, {
         origin: req.headers.origin && ctx.allowsOrigin(req) ? req.headers.origin : false,
         credentials: false,
-        allowedHeaders: ['Authorization', 'Content-Type', 'X-CSRF-Token'],
+        allowedHeaders: ['Authorization', 'Content-Type', 'X-CSRF-Token', 'Range', 'If-Range'],
+        exposedHeaders: ['Accept-Ranges', 'Content-Range', 'ETag'],
         methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       });
     },

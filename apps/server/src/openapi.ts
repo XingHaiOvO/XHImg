@@ -124,7 +124,11 @@ const bodies: Record<string, any> = {
     },
   },
   'put /api/v1/admin/processing': object(
-    { policy: processing, maxUploadMB: { type: 'integer', minimum: 1, maximum: 100 } },
+    {
+      policy: processing,
+      maxUploadMB: { type: 'integer', minimum: 1, maximum: 100 },
+      maxVideoUploadMB: { type: 'integer', minimum: 1, maximum: 1024, default: 500 },
+    },
     ['policy', 'maxUploadMB'],
   ),
   'post /api/v1/admin/images/{id}/reprocess': object({ processing }),
@@ -353,6 +357,11 @@ export function documentedApi(app: FastifyInstance) {
           parameter('search', string),
           parameter('tag', string),
           parameter('sort', { type: 'string', enum: ['newest', 'oldest', 'name'] }),
+          parameter(
+            'mediaType',
+            { type: 'string', enum: ['image', 'video'] },
+            '省略时返回图片和视频。',
+          ),
         );
         if (!path.includes('{folderId}')) parameters.push(parameter('folderId', string));
         if (path.startsWith('/api/v1/admin')) parameters.push(parameter('trash', boolean));
@@ -378,6 +387,11 @@ export function documentedApi(app: FastifyInstance) {
         parameters.push(
           parameter('visibility', { ...vis, default: 'private' }),
           parameter('storageId', string),
+          parameter(
+            'mediaType',
+            { type: 'string', enum: ['image', 'video'], default: 'image' },
+            '上传 MP4 时设为 video。',
+          ),
           parameter('processing', string, 'JSON 对象，只覆盖提交字段；请求 > 文件夹 > 系统。'),
           parameter(
             'classify',
@@ -386,7 +400,7 @@ export function documentedApi(app: FastifyInstance) {
           ),
         );
         op.description =
-          '单文件默认最大100 MiB，可由管理员调低。支持静态 JPG、PNG、WebP 及静态或动态 GIF，最多4000万像素。GIF 最多500帧，所有帧合计不超过4000万画布像素，原样保存并跳过图片处理。参数通过查询字符串传递。';
+          '图片默认最大 100 MiB，支持静态 JPG、PNG、WebP 和静态或动态 GIF。GIF 最多 500 帧，合计最多 4000 万画布像素。mediaType=video 接收 H.264 / AAC MP4，默认 500 MiB。GIF 和视频原样保存，视频跳过图片处理和 AI 分类。';
         op.responses = {
           '201': { description: '未启用异步处理时，保留原响应。' },
           '202': {
@@ -409,7 +423,7 @@ export function documentedApi(app: FastifyInstance) {
               name: 'Upload-Length',
               in: 'header',
               required: true,
-              schema: { type: 'integer', minimum: 1, maximum: 104857600 },
+              schema: { type: 'integer', minimum: 1, maximum: 1073741824 },
             },
             {
               name: 'Upload-Metadata',
@@ -417,7 +431,7 @@ export function documentedApi(app: FastifyInstance) {
               required: true,
               schema: string,
               description:
-                'tus Base64 元数据：filename、sha256 必填；folderId、storageId、visibility、processing(JSON)、classify 可选。',
+                'tus Base64 元数据：filename、sha256 必填；folderId、storageId、visibility、processing(JSON)、classify 可选；上传 MP4 时需设置 mediaType=video。',
             },
           );
           op.responses = { '201': { description: '已创建；Location 为续传资源地址。' } };

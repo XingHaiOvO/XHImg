@@ -1026,6 +1026,7 @@ function SiteImagePicker({ onSelect }: { onSelect: (url: string) => void }) {
   const results = useRef<HTMLDivElement>(null);
   const folders = useData<{ items: { id: string; name: string }[] }>('public/folders');
   const params = new URLSearchParams({
+    mediaType: 'image',
     page: String(criteria.page),
     limit: String(SITE_IMAGE_PAGE_SIZE),
     sort: 'newest',

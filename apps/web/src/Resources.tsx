@@ -1272,7 +1272,9 @@ function ImageEditor({ image, close, folders, reload }: any) {
               <Button type="button" variant="ghost" asChild>
                 <a href={`/api/v1/admin/images/${image.id}/original`}>下载原始文件</a>
               </Button>
-              {image.format === 'gif' ? (
+              {image.format === 'mp4' ? (
+                <p className="muted">视频原样保存，不能使用图片处理。</p>
+              ) : image.format === 'gif' ? (
                 <p className="muted">GIF 原样保存，不能重新处理。</p>
               ) : (
                 <details className="image-reprocess">
@@ -1395,7 +1397,7 @@ export function Trash() {
       logicalUrl: url,
       thumbnailUrl: url + '?thumbnail=true',
       logicalThumbnailUrl: url + '?thumbnail=true',
-      thumbnailState: 'ready',
+      thumbnailState: image.format === 'mp4' ? image.thumbnailState : 'ready',
       urlExpiresAt: undefined,
       thumbnailUrlExpiresAt: undefined,
     };

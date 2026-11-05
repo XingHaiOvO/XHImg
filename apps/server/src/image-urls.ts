@@ -38,20 +38,19 @@ export function actorExpiresAt(ctx: Context, actor: Actor) {
       : Infinity;
 }
 
-export function sameImageLocation(a: Row, b: Row) {
+export function sameImageLocation(a: Row, b: Row, includeThumbnail = true) {
   return [
     'storage_id',
     'storage_version',
     'object_key',
     'source_key',
-    'thumb_key',
     'content_version',
     'access_version',
     'folder_id',
     'state',
     'deleted_at',
     'publication_hold',
-    'thumbnail_state',
+    ...(includeThumbnail ? ['thumb_key', 'thumbnail_state'] : []),
   ].every((key) => a[key] === b[key]);
 }
 
@@ -83,7 +82,7 @@ export async function signObject(
     if (!adapter.presign) throw new Error('Signing unavailable');
     return await adapter.presign(key, {
       expiresAt: Math.min(Date.now() + 300_000, actorExpiresAt(ctx, actor), expiresAt),
-      mime: format === 'jpg' ? 'image/jpeg' : `image/${format}`,
+      mime: format === 'jpg' ? 'image/jpeg' : format === 'mp4' ? 'video/mp4' : `image/${format}`,
       disposition: `${original ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(filename)}`,
     });
   } catch (error) {
@@ -141,7 +140,7 @@ export async function imageResponse(
     let main: DownloadLink | undefined, thumbnail: DownloadLink | undefined;
     try {
       [main, thumbnail] = await Promise.all([
-        signObject(ctx, image, actor, 'image'),
+        image.format === 'mp4' ? undefined : signObject(ctx, image, actor, 'image'),
         image.thumbnail_state === 'ready' ? signObject(ctx, image, actor, 'thumbnail') : undefined,
       ]);
     } catch (error) {

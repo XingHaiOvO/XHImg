@@ -202,8 +202,13 @@ export function UploadCenter({
           const entry = batch[next++]!,
             file = entry.file!;
           try {
-            if (file.size > (config.data?.maxUploadMB ?? 100) * 1024 * 1024)
-              throw new Error('文件超过当前上传上限');
+            const video = resume
+              ? resume.options.mediaType === 'video'
+              : file.type === 'video/mp4' || /\.mp4$/i.test(file.name);
+            const limit = video
+              ? (config.data?.maxVideoUploadMB ?? 500)
+              : (config.data?.maxUploadMB ?? 100);
+            if (file.size > limit * 1024 ** 2) throw new Error('文件超过当前上传上限');
             while (
               [...live.current.values()].filter((e) => ['hashing', 'uploading'].includes(e.state))
                 .length >= 2 &&
@@ -237,7 +242,7 @@ export function UploadCenter({
               hash,
               name: file.name,
               size: file.size,
-              options,
+              options: video ? { ...options, mediaType: 'video' } : options,
               createdAt: Date.now(),
             };
             startTransfer(entry, file, record);
@@ -294,7 +299,8 @@ export function UploadCenter({
         <Upload size={28} />
         <strong>拖入图片，或点击选择</strong>
         <span>
-          JPG、PNG、WebP、GIF · 每张最多 {config.data?.maxUploadMB ?? 100}MB · 支持暂停与续传
+          JPG、PNG、WebP、GIF（{config.data?.maxUploadMB ?? 100} MiB）· MP4（
+          {config.data?.maxVideoUploadMB ?? 500} MiB）· 支持续传
         </span>
       </button>
       <div className="upload-destination-summary">
@@ -363,6 +369,9 @@ export function UploadCenter({
         />
         {!inherit && <ProcessingEditor value={policy} onChange={setPolicy} />}
         <p className="muted">GIF 原样保存，最多 500 帧，所有帧合计最多 4000 万像素。</p>
+        <p className="muted">
+          MP4 原样保存，支持 H.264 视频和 AAC 音频。图片处理与 AI 分类设置只应用于图片。
+        </p>
         <Field
           label="AI 分类"
           hint="指定文件夹默认不自动移动；明确启用后，可归入其他参与分类的文件夹。"
@@ -379,7 +388,7 @@ export function UploadCenter({
         className="sr-only"
         type="file"
         multiple
-        accept="image/jpeg,image/png,image/webp,image/gif,.gif"
+        accept="image/jpeg,image/png,image/webp,image/gif,.gif,video/mp4,.mp4"
         aria-label="选择上传图片"
         onChange={(e) => {
           void add(Array.from(e.target.files ?? []));
@@ -390,7 +399,7 @@ export function UploadCenter({
         ref={resumeInput}
         className="sr-only"
         type="file"
-        accept="image/jpeg,image/png,image/webp,image/gif,.gif"
+        accept="image/jpeg,image/png,image/webp,image/gif,.gif,video/mp4,.mp4"
         aria-label="选择原文件继续上传"
         onChange={(e) => {
           const file = e.target.files?.[0],

@@ -12,7 +12,7 @@ import { z } from 'zod';
 import type { Context } from './context.js';
 import { fail, id, HttpError } from './security.js';
 import { prepareUpload, acceptFile } from './pipeline.js';
-import { fileHash, persistedActor, uploadLimit } from './policies.js';
+import { fileHash, mediaTypeSchema, persistedActor, uploadLimit } from './policies.js';
 import { queueProcessing } from './processing.js';
 import { enqueueClassification } from './organization.js';
 declare module 'fastify' {
@@ -75,6 +75,9 @@ export async function finalizeUpload(ctx: Context, uploadId: string) {
     storageId: session.explicit_storage ? session.storage_id : undefined,
     processing: JSON.parse(session.policy),
     classify: !!session.classify,
+    mediaType: mediaTypeSchema.parse(
+      JSON.parse(session.tus_metadata ?? '{}').metadata?.mediaType ?? 'image',
+    ),
   };
   await acceptFile(ctx, path, session.name, actor, options, uploadId);
   await rm(path, { force: true });
@@ -252,7 +255,7 @@ export async function registerResumable(app: FastifyInstance, ctx: Context) {
     path: '/api/v1/resumable',
     datastore: new CheckedStore(),
     relativeLocation: true,
-    maxSize: () => uploadLimit(ctx),
+    maxSize: () => Math.max(uploadLimit(ctx), uploadLimit(ctx, 'video')),
     disableTerminationForFinishedUploads: true,
     allowedOrigins: () => {
       const request = scope.getStore()?.req;
@@ -273,7 +276,8 @@ export async function registerResumable(app: FastifyInstance, ctx: Context) {
         const request = scope.getStore()!.req,
           actor = ctx.actor(request),
           meta = upload.metadata ?? {};
-        if (!upload.size || upload.size < 1 || upload.size > uploadLimit(ctx))
+        const mediaType = mediaTypeSchema.parse(meta.mediaType ?? 'image');
+        if (!upload.size || upload.size < 1 || upload.size > uploadLimit(ctx, mediaType))
           fail(413, 'FILE_TOO_LARGE', '文件超过上传上限');
         const expected = z
           .string()
@@ -281,6 +285,7 @@ export async function registerResumable(app: FastifyInstance, ctx: Context) {
           .parse(meta.sha256)
           .toLowerCase();
         const options = {
+          mediaType,
           folderId: meta.folderId || undefined,
           storageId: meta.storageId || undefined,
           visibility: z.enum(['private', 'public']).parse(meta.visibility ?? 'private'),

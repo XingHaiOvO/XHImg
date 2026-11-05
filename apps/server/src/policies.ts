@@ -27,7 +27,13 @@ export const defaultPolicy: ProcessingPolicy = {
   maxHeight: null,
   preserveOriginal: true,
 };
-export const uploadLimit = (ctx: Context) => ctx.db.setting('maxUploadMB', 100) * 1024 * 1024;
+export const mediaTypeSchema = z.enum(['image', 'video']);
+export type MediaType = z.infer<typeof mediaTypeSchema>;
+export const uploadLimit = (ctx: Context, mediaType: MediaType = 'image') =>
+  (mediaType === 'video'
+    ? ctx.db.setting('maxVideoUploadMB', 500)
+    : ctx.db.setting('maxUploadMB', 100)) *
+  1024 ** 2;
 export function resolvePolicy(
   ctx: Context,
   folderId: string,

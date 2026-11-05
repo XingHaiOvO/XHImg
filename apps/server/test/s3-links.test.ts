@@ -160,6 +160,48 @@ test('S3 URLs verify real SigV4, bytes and response headers; lists do not read o
   }
 });
 
+test('S3 video streams only the requested bytes and cancels upstream on disconnect', async () => {
+  const f = await fixture();
+  try {
+    // Transport uses arbitrary bytes here to test exact slicing independently of FFmpeg.
+    const uploaded = await f.upload({ visibility: 'public' });
+    assert.equal(uploaded.statusCode, 201, uploaded.body);
+    const { id } = uploaded.json();
+    f.ctx.db.run("UPDATE images SET format='mp4',mime='video/mp4' WHERE id=?", id);
+    const video = (
+      await f.req('GET', '/api/v1/public/images?mediaType=video', undefined, {})
+    ).json().items[0];
+    assert.equal(video.url, `/i/${id}`);
+    assert.equal(video.urlExpiresAt, undefined);
+    const partial = await f.req('GET', video.url, undefined, { range: 'bytes=2-9' });
+    assert.equal(partial.statusCode, 206, partial.body);
+    assert.equal(partial.headers['content-type'], 'video/mp4');
+    assert.equal(partial.headers['content-range'], `bytes 2-9/${f.png.length}`);
+    assert.deepEqual(partial.rawPayload, f.png.subarray(2, 10));
+    assert.equal(f.remote.counts.get, 1);
+
+    const closed = Promise.withResolvers<void>();
+    f.remote.state.holdRange = (responseClosed) => void responseClosed.then(closed.resolve);
+    const url = await f.app.listen({ port: 0, host: '127.0.0.1' });
+    const controller = new AbortController();
+    const streaming = await fetch(url + video.url, {
+      headers: { Range: 'bytes=0-9' },
+      signal: controller.signal,
+    });
+    assert.equal(streaming.status, 206);
+    controller.abort();
+    await closed.promise;
+    await f.req('PATCH', `/api/v1/admin/images/${id}`, { visibility: 'private' });
+    assert.equal(
+      (await f.req('GET', video.url, undefined, { range: 'bytes=0-9' })).statusCode,
+      404,
+    );
+    assert.equal(f.remote.counts.get, 2);
+  } finally {
+    await f.close();
+  }
+});
+
 test('S3 links require current read scopes and inherit ancestor privacy; already issued URLs outlive app revocation', async () => {
   const f = await fixture();
   try {

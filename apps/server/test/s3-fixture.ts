@@ -16,7 +16,11 @@ export async function s3Fixture() {
     secretAccessKey = 'isolated-secret';
   const objects = new Map<string, { bytes: Buffer; mime: string }>();
   const counts = { get: 0, head: 0, put: 0, delete: 0, signed: 0 };
-  const state = { unavailable: false, now: () => Date.now() };
+  const state = {
+    unavailable: false,
+    now: () => Date.now(),
+    holdRange: undefined as ((closed: Promise<void>) => void) | undefined,
+  };
   const server = createServer(async (req, res) => {
     const url = new URL(req.url!, `http://${req.headers.host}`);
     const deny = (code = 'SignatureDoesNotMatch') => {
@@ -131,6 +135,26 @@ export async function s3Fixture() {
       ['response-content-disposition', 'content-disposition'],
     ])
       if (url.searchParams.has(parameter)) headers[header] = url.searchParams.get(parameter)!;
+    const range = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range ?? '');
+    if (req.method === 'GET' && range) {
+      const start = Number(range[1]);
+      const end = Number(range[2]);
+      if (start > end || end >= value.bytes.length) {
+        res.writeHead(416, { 'content-range': `bytes */${value.bytes.length}` });
+        return res.end();
+      }
+      const slice = value.bytes.subarray(start, end + 1);
+      res.writeHead(206, {
+        ...headers,
+        'content-length': slice.length,
+        'content-range': `bytes ${start}-${end}/${value.bytes.length}`,
+      });
+      if (state.holdRange) {
+        state.holdRange(new Promise<void>((resolve) => res.once('close', resolve)));
+        return res.write(slice.subarray(0, 1));
+      }
+      return res.end(slice);
+    }
     res.writeHead(200, headers);
     res.end(req.method === 'HEAD' ? undefined : value.bytes);
   });

@@ -95,6 +95,8 @@ export function enqueueClassification(
 ) {
   if (!ctx.access.has(actor, 'ai:classify')) fail(403, 'AI_FORBIDDEN', '没有 AI 分类权限');
   const image = ctx.image(imageId);
+  if (image.format === 'mp4')
+    fail(409, 'VIDEO_CLASSIFICATION_UNSUPPORTED', '视频不支持 AI 图片分类');
   if (image.deleted_at || image.state === 'purging') fail(409, 'NOT_AVAILABLE', '图片已删除');
   if (image.state !== 'ready') fail(409, 'PROCESSING', '请先完成图片处理或选择使用原图');
   if (image.processing_status === 'pending' || image.processing_status === 'processing')

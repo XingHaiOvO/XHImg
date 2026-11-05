@@ -7,7 +7,7 @@ import { s3Fixture } from '../apps/server/test/s3-fixture.ts';
 const require = createRequire(new URL('../apps/server/package.json', import.meta.url));
 const { createApp } = await import('../apps/server/dist/app.js');
 const sharp = require('sharp');
-const dir = await mkdtemp(join(tmpdir(), 'xhimg-browser-'));
+const dir = await mkdtemp(join(process.env.XHIMG_TEST_TMPDIR ?? tmpdir(), 'xhimg-browser-'));
 const runtime = await createApp({
   dir,
   masterKey: '12'.repeat(32),

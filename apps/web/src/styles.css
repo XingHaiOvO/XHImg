@@ -2030,6 +2030,25 @@ html[data-theme='dark'] .service-stats .service-failures strong {
   max-height: 55vh;
   object-fit: contain;
 }
+.preview-image video {
+  display: block;
+  width: 100%;
+  max-height: 65dvh;
+  background: #000;
+}
+.thumbnail-video-badge {
+  position: absolute;
+  top: 8px;
+  inset-inline-start: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: var(--r-full);
+  color: #fff;
+  background: #172334e8;
+  font-size: 12px;
+}
 .image-facts {
   display: flex;
   gap: 18px;

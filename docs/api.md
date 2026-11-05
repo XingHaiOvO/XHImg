@@ -53,6 +53,7 @@ curl -X POST 'http://localhost:9521/api/v1/upload?folderId=fld_ID&visibility=pub
 - `POST /upload`、`POST /folders/{folderId}/upload`：仅一个 multipart 文件。参数放在 URL：`folderId`、`visibility`、`storageId`。路径与查询文件夹冲突返回 400。默认未分类文件夹与 private；显式 storageId 还需存储授权。
 - 响应 201：返回图片信息，包括 ID、名称、文件夹、权限、格式、尺寸、处理状态和访问地址；地址字段见[图片地址与有效期](#图片地址与有效期)。
 - 默认上限 100 MiB，可由管理员调低。支持静态 JPG、PNG、WebP，以及静态和动态 GIF，最多 4000 万像素。GIF 最多 500 帧，像素按所有帧的画布合计，超限返回 `400 INVALID_IMAGE`。按文件内容识别格式，GIF 的 MIME 为 `image/gif`。
+- 上传 MP4 时在 URL 加 `mediaType=video`。接受 8 位 4:2:0 H.264 视频和可选的 AAC 音轨，最高 4096×2160，支持横竖方向。视频默认限额 500 MiB，管理员可在 1–1024 MiB 调整。服务器按内容校验后原样保存，返回 `201`、`format: "mp4"`、`mime: "video/mp4"`。视频跳过图片处理和 AI 分类，WebP 封面在后台生成。工具缺失返回 `503 VIDEO_TOOLS_UNAVAILABLE`，不支持的容器或编码返回 `415`。
 - 可选查询 `processing` 为 JSON 策略，`classify=true|false`。策略字段包括 enabled、compress、targetFormat（keep/jpg/png/webp）、quality（1–100，默认 80）、maxWidth/maxHeight（null 不限制）和 preserveOriginal（默认 true）。只覆盖提交字段，优先级请求 > 文件夹 > 系统。GIF 原样保存，缩略图和 AI 预览使用首帧。普通 GIF 上传在无需 AI 分类时返回 `201`，需要分类时返回 `202`。手动重新处理 GIF 返回 `409 GIF_PROCESSING_UNSUPPORTED`。
 - 启用处理或分类时响应 202，保留图片字段并增加 `uploadId`、`imageId`、`statusUrl`。传输成功不代表已发布；查询状态至 ready。处理或新图分类未完成时，非管理员原图、缩略图、查询与随机访问均隔离。
 - 当前图片的站内逻辑地址保持稳定。上传返回私有图片的裸地址不意味着可匿名访问；外部客户端可持 Key 请求，或在授权图片列表/随机 JSON 中取得短期签名 URL。
@@ -60,6 +61,8 @@ curl -X POST 'http://localhost:9521/api/v1/upload?folderId=fld_ID&visibility=pub
 ## 断点续传
 
 `POST /resumable` 创建，`HEAD/PATCH/DELETE /resumable/{uploadId}` 查询偏移、追加、取消。每次检查身份、归属及当前授权；管理员写入仍需 CSRF。协议版本 `Tus-Resumable: 1.0.0`。声明 `Upload-Length`，元数据 `filename`、`sha256` 必填，各值按 tus Base64 编码；可选 folderId、storageId、visibility、processing(JSON)、classify。
+
+续传 MP4 时加入 `mediaType dmlkZW8=`。声明的媒体类型决定创建时的文件大小上限，完整文件仍需通过相应格式校验。`GET /public/upload-config` 返回 `maxUploadMB` 和 `maxVideoUploadMB`。
 
 每片最多 4MiB，同一文件顺序上传。PATCH 使用 `application/offset+octet-stream`、`Upload-Offset` 和自定义 `X-Chunk-SHA256`（本片 SHA-256 十六进制）。校验不符 460，偏移不推进；偏移冲突 409。**未实现 tus Checksum 扩展**，分片校验使用上述自定义请求头。 tus 协议错误可能为纯文本；业务 JSON 接口沿用统一错误格式。
 
@@ -87,10 +90,12 @@ curl -i -X PATCH 'http://localhost:9521/api/v1/resumable/upl_ID' \
 ## 图片与文件夹查询
 
 - `GET /folders/{id}/images`：有效公开文件夹可匿名访问，私有文件夹须授权。内部图片仍逐项过滤。支持分页、search、tag、sort（newest/oldest/name）。
-- `GET /public/images`：仅公开图片，支持相同筛选，另有 folderId；不返回存储位置。
+- `GET /public/images`：公开图片和视频，支持相同筛选，另有 folderId。公开、文件夹和管理列表均可用 `mediaType=image|video` 筛选。公开列表省略存储位置。
 - `GET /public/folders`、`GET /public/services`、`GET /public/settings`：公开导航、服务卡片及站点名称、描述和首页背景图片地址。
 
 图片传输使用站点根路径 `GET /i/{id}`、`GET /t/{id}`，不加 `/api/v1` 前缀。访问时验证会话、Key 或 `sig` 查询参数；源文件仅允许管理员从专用下载接口获取。缓存与跳转规则见下节。
+
+MP4 通过 `GET /i/{id}` 在站内播放。本地和 S3 视频均支持 `HEAD` 和单段 `Range: bytes=起点-终点`，也可省略起点或终点。成功的分段请求返回 `206`、`Content-Range` 和 `Content-Length`，无法满足的范围返回 `416` 和 `Content-Range: bytes */文件大小`。每个请求独立检查权限，S3 播放字节经由站点服务器。`/t/{id}` 仍提供 WebP 封面。随机图接口只选择图片。
 
 ## 图片地址与有效期
 

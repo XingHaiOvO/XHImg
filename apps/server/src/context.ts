@@ -229,6 +229,7 @@ export class Context {
     return actor;
   }
   matches(endpoint: Row, image: Row): boolean {
+    if (image.format === 'mp4') return false;
     if (
       endpoint.folder_id &&
       !(

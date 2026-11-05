@@ -165,7 +165,7 @@ test('install, login, folder upload, public gallery, random service, private tra
   await expect(page.getByText('当前有效权限：私有')).toBeVisible();
   expect((await request.get(src!)).status()).toBe(404);
   await publicPage.reload();
-  await expect(publicPage.getByText('还没有符合条件的图片')).toBeVisible();
+  await expect(publicPage.getByText('还没有符合条件的资源')).toBeVisible();
   await page.getByRole('tab', { name: '图片', exact: true }).click();
   await page.getByLabel('选择 e2e-image.png').check();
   await page.getByRole('button', { name: '移入回收站' }).click();

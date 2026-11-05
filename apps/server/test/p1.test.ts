@@ -11,6 +11,7 @@ import { createApp } from '../src/app.js';
 import { queueProcessing } from '../src/processing.js';
 import { enqueueClassification } from '../src/organization.js';
 import { recoverResumable, expireResumable } from '../src/resumable.js';
+import { testVideo, videoToolsAvailable } from './video-fixture.js';
 
 const digest = (buffer: Buffer) => createHash('sha256').update(buffer).digest('hex');
 
@@ -141,8 +142,8 @@ test('a processing switch transaction failure preserves old bytes and cleans the
     await f.close();
   }
 });
-async function fixture() {
-  const dir = await mkdtemp(join(tmpdir(), 'xhimg-p1-'));
+async function fixture(root = tmpdir()) {
+  const dir = await mkdtemp(join(root, 'xhimg-p1-'));
   const runtime = await createApp({
     dir,
     masterKey: 'ab'.repeat(32),
@@ -429,6 +430,148 @@ test('GIF AI classification receives a first-frame JPEG while publication keeps 
   } finally {
     await f.close();
     await new Promise<void>((done) => server.close(() => done()));
+  }
+});
+
+test('MP4 upload and tus preserve original video, generate posters and support authorized ranges', async (t) => {
+  if (!videoToolsAvailable()) return t.skip('FFmpeg and FFprobe are required');
+  const f = await fixture(process.env.XHIMG_TEST_TMPDIR);
+  try {
+    const folder = await f.folder();
+    const file = testVideo('libx264', true);
+    const options = {
+      mediaType: 'video',
+      folderId: folder.id,
+      visibility: 'public',
+      classify: 'true',
+      processing: { enabled: true, targetFormat: 'jpg' },
+    };
+    const upload = await f.upload(options, file);
+    assert.equal(upload.statusCode, 201, upload.body);
+    const image = upload.json();
+    assert.deepEqual(
+      [image.format, image.mime, image.width, image.height],
+      ['mp4', 'video/mp4', 160, 90],
+    );
+    assert.deepEqual([image.processingStatus, image.classificationStatus], ['skipped', 'skipped']);
+    const original = await f.req('GET', image.logicalUrl, undefined, {});
+    assert.equal(original.headers['content-type'], 'video/mp4');
+    assert.deepEqual(original.rawPayload, file);
+    const head = await f.req('HEAD', image.logicalUrl, undefined, {});
+    assert.equal(head.statusCode, 200, head.body);
+    assert.equal(head.headers['content-length'], String(file.length));
+    assert.equal(head.headers['accept-ranges'], 'bytes');
+    assert.equal(head.rawPayload.length, 0);
+    for (const [range, start, end] of [
+      ['bytes=4-9', 4, 9],
+      ['bytes=4-', 4, file.length - 1],
+      ['bytes=-8', file.length - 8, file.length - 1],
+    ] as const) {
+      const partial = await f.req('GET', image.logicalUrl, undefined, { range });
+      assert.equal(partial.statusCode, 206, partial.body);
+      assert.equal(partial.headers['content-range'], `bytes ${start}-${end}/${file.length}`);
+      assert.deepEqual(partial.rawPayload, file.subarray(start, end + 1));
+    }
+    const invalid = await f.req('GET', image.logicalUrl, undefined, {
+      range: `bytes=${file.length}-`,
+    });
+    assert.equal(invalid.statusCode, 416);
+    assert.equal(invalid.headers['content-range'], `bytes */${file.length}`);
+    assert.equal(
+      (await f.req('GET', image.logicalUrl, undefined, { range: 'bytes=0-9', 'if-range': '"old"' }))
+        .statusCode,
+      200,
+    );
+    const etag = original.headers.etag!;
+    assert.equal(
+      (await f.req('GET', image.logicalUrl, undefined, { 'if-none-match': etag })).statusCode,
+      304,
+    );
+
+    // A failed poster does not block original playback, and can be retried.
+    const stored = join(f.dir, 'objects', 'local', f.ctx.image(image.id).object_key);
+    await writeFile(stored, Buffer.alloc(file.length));
+    await f.worker.tick();
+    assert.equal(f.ctx.image(image.id).thumbnail_state, 'failed');
+    await writeFile(stored, file);
+    assert.deepEqual((await f.req('GET', image.logicalUrl, undefined, {})).rawPayload, file);
+    const job = f.ctx.db.one(
+      "SELECT id FROM jobs WHERE image_id=? AND kind='thumbnail'",
+      image.id,
+    )!;
+    assert.equal((await f.req('POST', `/api/v1/admin/jobs/${job.id}/retry`)).statusCode, 200);
+    await f.worker.tick();
+    const poster = await f.req('GET', image.logicalThumbnailUrl, undefined, {});
+    assert.equal(poster.headers['content-type'], 'image/webp');
+    const frame = await sharp(poster.rawPayload).metadata();
+    assert.deepEqual([frame.width, frame.height], [160, 90]);
+
+    assert.equal(
+      (await f.req('GET', '/api/v1/public/images?mediaType=image', undefined, {})).json().total,
+      0,
+    );
+    assert.equal(
+      (await f.req('GET', '/api/v1/public/images?mediaType=video', undefined, {})).json().total,
+      1,
+    );
+    f.ctx.db.run("UPDATE random_endpoints SET enabled=1,visibility='public' WHERE id='global'");
+    const random = await f.req('GET', '/api/v1/random', undefined, {});
+    assert.equal(random.json().error.code, 'NO_CANDIDATES');
+    assert.equal(
+      (await f.req('POST', `/api/v1/admin/images/${image.id}/reprocess`)).json().error.code,
+      'VIDEO_PROCESSING_UNSUPPORTED',
+    );
+    const ai = await f.req('PUT', '/api/v1/admin/ai', {
+      enabled: true,
+      baseUrl: 'http://127.0.0.1:9/v1',
+      model: 'fixture',
+      folderIds: [folder.id],
+    });
+    assert.equal(ai.statusCode, 200, ai.body);
+    assert.equal(
+      (await f.req('POST', '/api/v1/admin/classification', { ids: [image.id] })).json().error.code,
+      'VIDEO_CLASSIFICATION_UNSUPPORTED',
+    );
+
+    const url = await f.tusCreate(file, {
+      filename: 'resume.mp4',
+      folderId: folder.id,
+      mediaType: 'video',
+    });
+    const split = Math.floor(file.length / 2);
+    assert.equal((await f.tusPatch(url, file.subarray(0, split))).statusCode, 204);
+    assert.equal((await f.tusPatch(url, file.subarray(split), split)).statusCode, 204);
+    await f.worker.tick();
+    const receipt = (await f.req('GET', `/api/v1/uploads/${url.split('/').at(-1)}`)).json();
+    assert.equal(receipt.state, 'ready');
+    assert.equal(receipt.image.format, 'mp4');
+    assert.equal(
+      (await f.req('GET', receipt.image.logicalUrl, undefined, { range: 'bytes=0-9' })).statusCode,
+      404,
+    );
+    assert.deepEqual((await f.req('GET', receipt.image.logicalUrl)).rawPayload, file);
+
+    assert.equal((await f.upload(options, f.png)).json().error.code, 'UNSUPPORTED_VIDEO_FORMAT');
+    assert.equal(
+      (await f.upload(options, testVideo('mpeg4'))).json().error.code,
+      'UNSUPPORTED_VIDEO_CODEC',
+    );
+    f.ctx.db.set('maxVideoUploadMB', 1);
+    assert.equal((await f.upload(options, Buffer.alloc(1024 ** 2 + 1))).statusCode, 413);
+    assert.equal(f.ctx.db.one('SELECT COUNT(*) AS n FROM images')!.n, 2);
+    assert.equal((await f.req('DELETE', `/api/v1/admin/images/${image.id}`)).statusCode, 200);
+    assert.equal(
+      (await f.req('GET', image.logicalUrl, undefined, { range: 'bytes=0-9' })).statusCode,
+      404,
+    );
+    const trash = await f.req('GET', `/api/v1/admin/images/${image.id}/trash-preview`, undefined, {
+      ...f.headers,
+      range: 'bytes=0-9',
+    });
+    assert.equal(trash.statusCode, 206, trash.body);
+    assert.deepEqual(trash.rawPayload, file.subarray(0, 10));
+  } finally {
+    await f.close();
   }
 });
 

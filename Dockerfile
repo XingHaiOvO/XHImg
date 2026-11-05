@@ -17,6 +17,9 @@ RUN pnpm build
 FROM node:24-bookworm-slim
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=9521 DATA_DIR=/app/data
 WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 # Preserve pnpm's symlink graph and native modules built on the same Debian ABI.
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/apps/server/package.json ./apps/server/package.json
