@@ -80,6 +80,7 @@ export function Modal({
   busy?: boolean;
   cancelFocus?: boolean;
 }) {
+  const opener = React.useRef<HTMLElement | null>(null);
   return (
     <DialogPrimitive.Root
       open={open}
@@ -92,16 +93,21 @@ export function Modal({
         <DialogPrimitive.Content
           className="modal-content"
           aria-busy={busy}
-          onOpenAutoFocus={
-            cancelFocus
-              ? (event) => {
-                  event.preventDefault();
-                  (event.currentTarget as HTMLElement)
-                    .querySelector<HTMLButtonElement>('[data-cancel]')
-                    ?.focus();
-                }
-              : undefined
-          }
+          onOpenAutoFocus={(event) => {
+            opener.current =
+              document.activeElement instanceof HTMLElement ? document.activeElement : null;
+            if (cancelFocus) {
+              event.preventDefault();
+              (event.currentTarget as HTMLElement)
+                .querySelector<HTMLButtonElement>('[data-cancel]')
+                ?.focus();
+            }
+          }}
+          onCloseAutoFocus={(event) => {
+            if (!opener.current?.isConnected) return;
+            event.preventDefault();
+            opener.current.focus({ preventScroll: true });
+          }}
         >
           <header className="modal-heading">
             <DialogPrimitive.Title>{title}</DialogPrimitive.Title>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   Shuffle,
@@ -17,27 +17,19 @@ import { Pagination, Button, Busy, Modal } from './components/ui';
 import type { ImageInfo } from '../../../packages/shared/src/index';
 import { useImageSource } from './image-links';
 import { useSiteSettings } from './site-settings';
-export function Thumbnail({
-  image,
-  onClick,
-  actionLabel,
-  disabled,
-}: {
-  image: Partial<ImageInfo> & { previewRevision?: number };
-  onClick?: () => void;
-  actionLabel?: string;
-  disabled?: boolean;
-}) {
-  const [failed, setFailed] = useState(false);
+import { animateEntrance } from './motion';
+
+function useThumbnailSource(image: Partial<ImageInfo>) {
   const link = useImageSource(image, true);
-  const [attempt, setAttempt] = useState(0),
-    [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const [loaded, setLoaded] = useState(false);
   const pending = !!image.thumbnailState && image.thumbnailState !== 'ready';
   useEffect(() => {
     setFailed(false);
     setAttempt(0);
     setLoaded(false);
-  }, [image.thumbnailUrl, image.thumbnailState, image.previewRevision]);
+  }, [image.thumbnailUrl, image.thumbnailState]);
   useEffect(() => {
     if (!link.direct && !loaded && (pending || failed) && attempt < 6) {
       const timer = setTimeout(() => {
@@ -47,14 +39,46 @@ export function Thumbnail({
       return () => clearTimeout(timer);
     }
   }, [loaded, pending, failed, attempt, link.direct]);
-  const source = link.source;
+  return {
+    source:
+      link.source +
+      (!link.direct && attempt
+        ? `${link.source.includes('?') ? '&' : '?'}previewRetry=${attempt}`
+        : ''),
+    unavailable: link.failed || (!link.direct && failed) || (pending && attempt === 0),
+    failed: link.failed || (failed && attempt >= 6),
+    canRetry: link.failed,
+    retry: link.retry,
+    onLoad: () => setLoaded(true),
+    onError: () => {
+      if (link.direct) link.onError();
+      else setFailed(true);
+    },
+  };
+}
+
+export function Thumbnail({
+  image,
+  onClick,
+  actionLabel,
+  disabled,
+  previewHint = false,
+}: {
+  image: Partial<ImageInfo>;
+  onClick?: () => void;
+  actionLabel?: string;
+  disabled?: boolean;
+  previewHint?: boolean;
+}) {
+  const thumbnail = useThumbnailSource(image);
   return (
     <button
       className="image-thumb"
       aria-label={actionLabel ?? `查看 ${image.name ?? '图片'}`}
-      disabled={disabled}
+      aria-disabled={disabled || undefined}
       onClick={() => {
-        if (link.failed) link.retry();
+        if (disabled) return;
+        if (thumbnail.canRetry) thumbnail.retry();
         else onClick?.();
       }}
       style={
@@ -63,27 +87,24 @@ export function Thumbnail({
           : { aspectRatio: '4/3' }
       }
     >
-      {link.failed || (!link.direct && failed) || (pending && attempt === 0) ? (
+      {thumbnail.unavailable ? (
         <span className="thumb-placeholder">
           <ImageOff size={24} />
-          <small>{link.failed ? '加载失败，点击重试' : '预览暂未就绪'}</small>
+          <small>{thumbnail.canRetry ? '加载失败，点击重试' : '预览暂未就绪'}</small>
         </span>
       ) : (
         <img
-          src={
-            source +
-            (!link.direct && attempt
-              ? `${source.includes('?') ? '&' : '?'}previewRetry=${attempt}`
-              : '')
-          }
+          src={thumbnail.source}
           alt={image.name ?? '随机图片预览'}
           loading="lazy"
-          onError={() => {
-            if (link.direct) link.onError();
-            else setFailed(true);
-          }}
-          onLoad={() => setLoaded(true)}
+          onError={thumbnail.onError}
+          onLoad={thumbnail.onLoad}
         />
+      )}
+      {previewHint && !thumbnail.unavailable && (
+        <span className="thumbnail-preview-hint" aria-hidden="true">
+          查看大图
+        </span>
       )}
     </button>
   );
@@ -119,7 +140,15 @@ export function Preview({
                 </Button>
               </div>
             ) : (
-              <img src={link.source} onError={link.onError} alt={image.name ?? '图片'} />
+              <img
+                key={link.source}
+                src={link.source}
+                onError={link.onError}
+                onLoad={(event) => {
+                  event.currentTarget.dataset.loaded = 'true';
+                }}
+                alt={image.name ?? '图片'}
+              />
             )}
           </div>
           <div className="image-facts">
@@ -182,53 +211,164 @@ export function Preview({
     </Modal>
   );
 }
+type ServiceFrame = { image: Partial<ImageInfo>; revision: number };
+
+function ServiceImage({
+  frame,
+  incoming,
+  onReady,
+  onFailure,
+}: {
+  frame: ServiceFrame;
+  incoming: boolean;
+  onReady: (frame: ServiceFrame) => void;
+  onFailure: (frame: ServiceFrame) => void;
+}) {
+  const thumbnail = useThumbnailSource(frame.image);
+  const layer = useRef<HTMLSpanElement>(null);
+  const [loaded, setLoaded] = useState('');
+  const ready = loaded === thumbnail.source && !thumbnail.unavailable;
+  useEffect(() => {
+    if (incoming && thumbnail.failed) onFailure(frame);
+  }, [incoming, thumbnail.failed, frame, onFailure]);
+  useLayoutEffect(() => {
+    if (!incoming || !ready || !layer.current) return;
+    const animation = animateEntrance(layer.current, [{ opacity: 0 }, { opacity: 1 }], 240);
+    if (!animation) {
+      onReady(frame);
+      return;
+    }
+    void animation.finished.then(
+      () => onReady(frame),
+      () => {},
+    );
+    return () => animation.cancel();
+  }, [frame, incoming, onReady, ready]);
+  return (
+    <span
+      ref={layer}
+      className="service-image-layer"
+      data-frame={incoming ? 'incoming' : 'current'}
+      data-ready={ready}
+      aria-hidden={incoming || undefined}
+    >
+      {(!thumbnail.unavailable || !incoming) && (
+        <img
+          src={incoming ? thumbnail.source : loaded}
+          alt={frame.image.name ?? '随机图片预览'}
+          loading="lazy"
+          onLoad={() => {
+            thumbnail.onLoad();
+            if (incoming) setLoaded(thumbnail.source);
+          }}
+          onError={thumbnail.onError}
+        />
+      )}
+    </span>
+  );
+}
+
 function ServiceCard({ service }: { service: any }) {
   const notice = useNotice(),
-    [image, setImage] = useState<any>(),
+    [current, setCurrent] = useState<ServiceFrame>(),
+    [incoming, setIncoming] = useState<ServiceFrame>(),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
-  const refresh = async () => {
-    if (busy) return;
+  const previewRevision = useRef(0);
+  const request = useRef<AbortController | undefined>(undefined);
+  const url = service.url as string;
+  const refresh = useCallback(async () => {
+    if (request.current) return;
+    const controller = new AbortController();
+    request.current = controller;
+    const revision = ++previewRevision.current;
+    setIncoming(undefined);
+    setError('');
     setBusy(true);
     try {
-      setImage({ ...(await api(service.url + '?mode=json')), previewRevision: Date.now() });
-      setError('');
+      const image = await api<Partial<ImageInfo>>(url + '?mode=json', {
+        signal: controller.signal,
+      });
+      if (!controller.signal.aborted) setIncoming({ image, revision });
     } catch (e: any) {
-      setImage(undefined);
-      setError(e.message);
+      if (!controller.signal.aborted) {
+        setCurrent(undefined);
+        setError(e.message);
+      }
     } finally {
-      setBusy(false);
+      if (request.current === controller) {
+        request.current = undefined;
+        setBusy(false);
+      }
     }
-  };
+  }, [url]);
   useEffect(() => {
-    void refresh();
-  }, [service.id]);
+    let disposed = false;
+    setCurrent(undefined);
+    setIncoming(undefined);
+    queueMicrotask(() => {
+      if (!disposed) void refresh();
+    });
+    return () => {
+      disposed = true;
+      previewRevision.current++;
+      request.current?.abort();
+      request.current = undefined;
+    };
+  }, [refresh]);
+  const onReady = useCallback((frame: ServiceFrame) => {
+    if (frame.revision !== previewRevision.current) return;
+    setCurrent(frame);
+    setIncoming(undefined);
+  }, []);
+  const onFailure = useCallback((frame: ServiceFrame) => {
+    if (frame.revision !== previewRevision.current) return;
+    setIncoming(undefined);
+    setError('预览图片加载失败，请刷新重试');
+  }, []);
   const kind =
     service.kind === 'global' ? '全站图片' : service.kind === 'folder' ? '文件夹服务' : '精选来源';
   return (
-    <article className="service-card" aria-busy={busy}>
+    <article className="service-card" aria-busy={busy || !!incoming}>
       <div className="service-preview">
-        {image ? (
-          <Thumbnail
-            image={image}
-            actionLabel={`刷新 ${service.name} 图片`}
-            disabled={busy}
-            onClick={() => void refresh()}
-          />
-        ) : (
-          <div className="service-empty" role="status">
-            <Images size={28} />
-            <span>{busy ? '正在选择图片…' : error || '暂无可用图片'}</span>
-          </div>
+        <button
+          type="button"
+          className="image-thumb"
+          aria-label={`刷新 ${service.name} 图片`}
+          aria-disabled={busy || undefined}
+          onClick={() => void refresh()}
+        >
+          {!current && (
+            <span className="service-empty">
+              <Images size={28} />
+            </span>
+          )}
+          {[current, incoming].map(
+            (frame) =>
+              frame && (
+                <ServiceImage
+                  key={frame.revision}
+                  frame={frame}
+                  incoming={frame === incoming}
+                  onReady={onReady}
+                  onFailure={onFailure}
+                />
+              ),
+          )}
+        </button>
+        {(error || (!current && !incoming)) && (
+          <span className="service-preview-status" role="status">
+            {busy ? '正在选择图片…' : error || '暂无可用图片'}
+          </span>
         )}
         <h3 className="service-name">{service.name}</h3>
         <button
           className="refresh-button"
           aria-label={`刷新 ${service.name} 预览`}
-          disabled={busy}
+          aria-disabled={busy || undefined}
           onClick={() => void refresh()}
         >
-          <RefreshCw size={16} className={busy ? 'spin' : ''} />
+          <RefreshCw size={16} className={busy || incoming ? 'spin' : ''} />
         </button>
       </div>
       <div className="service-card-content">
@@ -264,6 +404,37 @@ function ServiceCard({ service }: { service: any }) {
     </article>
   );
 }
+function ServiceGrid({ services }: { services: any[] }) {
+  const grid = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const visible = Array.from(grid.current!.querySelectorAll<HTMLElement>('.service-card'))
+      .filter((card) => {
+        const bounds = card.getBoundingClientRect();
+        return bounds.top < innerHeight && bounds.bottom > 0;
+      })
+      .slice(0, 6);
+    const animations = visible.map((card, index) =>
+      animateEntrance(
+        card,
+        [
+          { opacity: 0, transform: 'translateY(12px)' },
+          { opacity: 1, transform: 'none' },
+        ],
+        240,
+        index * 35,
+      ),
+    );
+    return () => animations.forEach((animation) => animation?.cancel());
+  }, []);
+  return (
+    <div ref={grid} className="service-grid">
+      {services.map((service) => (
+        <ServiceCard key={service.id} service={service} />
+      ))}
+    </div>
+  );
+}
+
 export function Home() {
   const { data, error, loading } = useData('public/services');
   const site = useSiteSettings();
@@ -277,10 +448,14 @@ export function Home() {
       <section className="home-banner" aria-labelledby="home-title">
         {backgroundUrl && !backgroundFailed && (
           <img
+            key={backgroundUrl}
             className="home-banner-image"
             src={backgroundUrl}
             alt=""
             fetchPriority="high"
+            onLoad={(event) => {
+              event.currentTarget.dataset.loaded = 'true';
+            }}
             onError={() => setBackgroundFailed(true)}
           />
         )}
@@ -295,7 +470,9 @@ export function Home() {
             </span>
             <h1 id="home-title">{site?.title ?? 'XHImg'}</h1>
           </div>
-          {site?.description && <p className="home-description">{site.description}</p>}
+          <div className="home-copy">
+            {site?.description && <p className="home-description">{site.description}</p>}
+          </div>
           <div className="home-links">
             <Button asChild>
               <Link to="/gallery">
@@ -324,11 +501,7 @@ export function Home() {
             {error}
           </div>
         ) : data?.items.length ? (
-          <div className="service-grid">
-            {data.items.map((service: any) => (
-              <ServiceCard key={service.id} service={service} />
-            ))}
-          </div>
+          <ServiceGrid services={data.items} />
         ) : (
           <div className="empty bordered">
             <Shuffle size={32} />
@@ -449,6 +622,7 @@ export function Gallery() {
               <Thumbnail
                 image={{ ...image, name: image.description || '图片预览' }}
                 actionLabel={image.description ? `查看图片：${image.description}` : '查看图片'}
+                previewHint
                 onClick={() => setPreview(image)}
               />
             </article>

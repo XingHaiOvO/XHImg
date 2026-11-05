@@ -34,6 +34,7 @@ import { Services } from './Services';
 import { SettingsPage } from './Settings';
 import { Organization } from './Organization';
 import { useSiteSettings } from './site-settings';
+import { useRouteEntrance } from './motion';
 export function Brand() {
   const site = useSiteSettings();
   const title = site?.title ?? 'XHImg';
@@ -86,7 +87,9 @@ function Theme() {
   );
 }
 function PublicShell() {
-  const home = useLocation().pathname === '/';
+  const { pathname } = useLocation();
+  const home = pathname === '/';
+  const content = useRouteEntrance<HTMLDivElement>(pathname);
   const site = useSiteSettings();
   const title = site?.title ?? 'XHImg';
   return (
@@ -107,7 +110,9 @@ function PublicShell() {
           </Link>
         </div>
       </header>
-      <Outlet />
+      <div className="public-route" ref={content}>
+        <Outlet />
+      </div>
       <footer className="public-footer">
         <div className="footer-main">
           <Brand />
@@ -133,6 +138,7 @@ function AdminShell() {
     [open, setOpen] = useState(false),
     [menuOpen, setMenuOpen] = useState(false);
   const trashCount = useData('admin/images?trash=true&limit=1');
+  const content = useRouteEntrance<HTMLElement>(location.pathname);
   const trashTotal = trashCount.data?.total ?? 0;
   const accountRows = useRef<{ desktop: HTMLDivElement | null; mobile: HTMLDivElement | null }>({
     desktop: null,
@@ -338,7 +344,7 @@ function AdminShell() {
               <Theme />
             </div>
           </header>
-          <main className="workspace">
+          <main className="workspace" ref={content}>
             <Outlet />
           </main>
         </div>

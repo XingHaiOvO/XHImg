@@ -2,12 +2,14 @@ import {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
   useState,
   useCallback,
   useRef,
   type ReactNode,
 } from 'react';
 import { X } from 'lucide-react';
+import { animateEntrance } from './motion';
 let csrf = '';
 export const csrfToken = () => csrf;
 export function setCsrf(value: string) {
@@ -138,10 +140,50 @@ export function usePolling(reload: () => Promise<void>, active: boolean) {
 }
 const MAX_NOTICES = 3;
 const NoticeContext = createContext<(text: string, error?: boolean) => void>(() => {});
+type Notice = { id: number; text: string; error: boolean };
+function NoticeItem({ notice, dismiss }: { notice: Notice; dismiss: (id: number) => void }) {
+  const element = useRef<HTMLDivElement>(null);
+  const [closing, setClosing] = useState(false);
+  useEffect(() => {
+    if (closing) return;
+    const timer = setTimeout(() => setClosing(true), notice.error ? 8000 : 4000);
+    return () => clearTimeout(timer);
+  }, [closing, notice.error]);
+  useLayoutEffect(() => {
+    if (!closing || !element.current) return;
+    const animation = animateEntrance(element.current, [{ opacity: 1 }, { opacity: 0 }], 140);
+    if (!animation) {
+      dismiss(notice.id);
+      return;
+    }
+    void animation.finished.then(
+      () => dismiss(notice.id),
+      () => {},
+    );
+    return () => animation.cancel();
+  }, [closing, dismiss, notice.id]);
+  return (
+    <div
+      ref={element}
+      className={'notice ' + (notice.error ? 'error' : '')}
+      data-closing={closing || undefined}
+      inert={closing}
+      role={closing ? undefined : notice.error ? 'alert' : 'status'}
+    >
+      <span>{notice.text}</span>
+      <button className="icon-button" aria-label="关闭提示" onClick={() => setClosing(true)}>
+        <X size={16} />
+      </button>
+    </div>
+  );
+}
 export function NoticeProvider({ children }: { children: ReactNode }) {
-  const [notices, setNotices] = useState<{ id: number; text: string; error: boolean }[]>([]);
+  const [notices, setNotices] = useState<Notice[]>([]);
   const nextId = useRef(0);
-  const dismiss = (id: number) => setNotices((items) => items.filter((item) => item.id !== id));
+  const dismiss = useCallback(
+    (id: number) => setNotices((items) => items.filter((item) => item.id !== id)),
+    [],
+  );
   return (
     <NoticeContext.Provider
       value={(text, error = false) => {
@@ -152,26 +194,12 @@ export function NoticeProvider({ children }: { children: ReactNode }) {
             { id, text, error },
           ].slice(-MAX_NOTICES),
         );
-        setTimeout(() => dismiss(id), error ? 8000 : 4000);
       }}
     >
       {children}
       <div className="notice-stack">
         {notices.map((notice) => (
-          <div
-            key={notice.id}
-            className={'notice ' + (notice.error ? 'error' : '')}
-            role={notice.error ? 'alert' : 'status'}
-          >
-            <span>{notice.text}</span>
-            <button
-              className="icon-button"
-              aria-label="关闭提示"
-              onClick={() => dismiss(notice.id)}
-            >
-              <X size={16} />
-            </button>
-          </div>
+          <NoticeItem key={notice.id} notice={notice} dismiss={dismiss} />
         ))}
       </div>
     </NoticeContext.Provider>
