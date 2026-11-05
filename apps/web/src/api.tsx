@@ -78,8 +78,13 @@ export function useData<T = any>(path: string) {
     return promise;
   }, [path]);
   useEffect(() => {
-    void reload();
+    let disposed = false;
+    // Let StrictMode clean up its first effect before starting a request.
+    queueMicrotask(() => {
+      if (!disposed) void reload();
+    });
     return () => {
+      disposed = true;
       request.current?.controller.abort();
       request.current = undefined;
       sequence.current++;

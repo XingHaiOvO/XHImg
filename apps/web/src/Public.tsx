@@ -16,6 +16,7 @@ import { api, useData, useNotice, copy, absolute, bytes } from './api';
 import { Pagination, Button, Busy, Modal } from './components/ui';
 import type { ImageInfo } from '../../../packages/shared/src/index';
 import { useImageSource } from './image-links';
+import { useSiteSettings } from './site-settings';
 export function Thumbnail({
   image,
   onClick,
@@ -265,18 +266,11 @@ function ServiceCard({ service }: { service: any }) {
 }
 export function Home() {
   const { data, error, loading } = useData('public/services');
-  const site = useData('public/settings');
-  useEffect(() => {
-    const changed = () => {
-      void site.reload();
-    };
-    window.addEventListener('site-settings', changed);
-    return () => window.removeEventListener('site-settings', changed);
-  }, [site.reload]);
+  const site = useSiteSettings();
   const [backgroundFailed, setBackgroundFailed] = useState(false);
   const [logoFailed, setLogoFailed] = useState(false);
-  useEffect(() => setLogoFailed(false), [site.data?.logoUrl]);
-  const backgroundUrl = site.data?.homeBackgroundUrl;
+  useEffect(() => setLogoFailed(false), [site?.logoUrl]);
+  const backgroundUrl = site?.homeBackgroundUrl;
   useEffect(() => setBackgroundFailed(false), [backgroundUrl]);
   return (
     <main className="home-page">
@@ -293,15 +287,15 @@ export function Home() {
         <div className="home-banner-content">
           <div className="home-identity">
             <span className="home-logo">
-              {site.data?.logoUrl && !logoFailed ? (
-                <img src={site.data.logoUrl} alt="" onError={() => setLogoFailed(true)} />
+              {site?.logoUrl && !logoFailed ? (
+                <img src={site.logoUrl} alt="" onError={() => setLogoFailed(true)} />
               ) : (
                 <Aperture size={37} strokeWidth={1.5} />
               )}
             </span>
-            <h1 id="home-title">{site.data?.title ?? 'XHImg'}</h1>
+            <h1 id="home-title">{site?.title ?? 'XHImg'}</h1>
           </div>
-          {site.data?.description && <p className="home-description">{site.data.description}</p>}
+          {site?.description && <p className="home-description">{site.description}</p>}
           <div className="home-links">
             <Button asChild>
               <Link to="/gallery">

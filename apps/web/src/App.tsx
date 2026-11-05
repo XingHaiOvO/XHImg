@@ -33,30 +33,19 @@ import { Overview, Resources, Trash } from './Resources';
 import { Services } from './Services';
 import { SettingsPage } from './Settings';
 import { Organization } from './Organization';
+import { useSiteSettings } from './site-settings';
 export function Brand() {
-  const site = useData('public/settings');
-  const title = site.data?.title ?? 'XHImg';
+  const site = useSiteSettings();
+  const title = site?.title ?? 'XHImg';
   const [logoFailed, setLogoFailed] = useState(false);
-  useEffect(() => setLogoFailed(false), [site.data?.logoUrl]);
+  useEffect(() => setLogoFailed(false), [site?.logoUrl]);
   useEffect(() => {
     document.title = `${title} · 一次整理，随处调用`;
   }, [title]);
-  useEffect(() => {
-    const changed = () => {
-      void site.reload();
-    };
-    window.addEventListener('site-settings', changed);
-    return () => window.removeEventListener('site-settings', changed);
-  }, [site.reload]);
   return (
     <Link to="/" className="brand" aria-label={`${title} 首页`}>
-      {site.data?.logoUrl && !logoFailed ? (
-        <img
-          className="brand-logo"
-          src={site.data.logoUrl}
-          alt=""
-          onError={() => setLogoFailed(true)}
-        />
+      {site?.logoUrl && !logoFailed ? (
+        <img className="brand-logo" src={site.logoUrl} alt="" onError={() => setLogoFailed(true)} />
       ) : (
         <span className="brand-icon">
           <Aperture size={23} />
@@ -98,8 +87,8 @@ function Theme() {
 }
 function PublicShell() {
   const home = useLocation().pathname === '/';
-  const site = useData('public/settings');
-  const title = site.data?.title ?? 'XHImg';
+  const site = useSiteSettings();
+  const title = site?.title ?? 'XHImg';
   return (
     <div className={home ? 'public-site public-site-home' : 'public-site'}>
       <header className="public-header">
@@ -440,17 +429,12 @@ function AuthPage({ setup = false }: { setup?: boolean }) {
   );
 }
 export default function App() {
-  const site = useData('public/settings');
+  const logoUrl = useSiteSettings()?.logoUrl;
   useEffect(() => {
-    const changed = () => void site.reload();
-    window.addEventListener('site-settings', changed);
-    return () => window.removeEventListener('site-settings', changed);
-  }, [site.reload]);
-  useEffect(() => {
-    if (!site.data) return;
+    if (logoUrl === undefined) return;
     const icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
     if (!icon) return;
-    icon.href = site.data.logoUrl || '/favicon.svg';
+    icon.href = logoUrl || '/favicon.svg';
     icon.onerror = () => {
       icon.onerror = null;
       icon.href = '/favicon.svg';
@@ -458,7 +442,7 @@ export default function App() {
     return () => {
       icon.onerror = null;
     };
-  }, [site.data?.logoUrl]);
+  }, [logoUrl]);
   return (
     <Routes>
       <Route element={<PublicShell />}>
