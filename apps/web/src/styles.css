@@ -578,7 +578,7 @@ form > .button {
   font-size: 11px;
   white-space: nowrap;
 }
-.service-preview :is(.image-thumb, .refresh-button)[aria-disabled='true'] {
+.service-preview :is(.service-refresh-area, .refresh-button)[aria-disabled='true'] {
   opacity: 1;
   cursor: wait;
 }
@@ -626,15 +626,32 @@ form > .button {
   width: 100%;
   aspect-ratio: auto !important;
 }
-.service-preview .image-thumb:focus-visible {
+.service-refresh-area {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+.service-refresh-area:focus-visible {
   outline-offset: -3px;
 }
 .service-image-layer {
   position: absolute;
   inset: 0;
 }
-.service-video-placeholder {
-  background: var(--hover);
+.service-image-layer video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.service-preview .service-play-button {
+  right: 60px;
+  z-index: 1;
+}
+.service-preview:has(.service-play-button) .service-preview-status {
+  inset-inline-end: 106px;
 }
 .service-image-layer .thumbnail-video-badge {
   inset-inline-start: auto;
@@ -909,7 +926,8 @@ form > .button {
   transition: opacity 0.2s;
 }
 @media (hover: hover) and (pointer: fine) {
-  .image-thumb:hover img {
+  .image-thumb:hover img,
+  .service-preview:has(.service-refresh-area:hover) .service-image-layer img {
     opacity: 0.9;
   }
   .gallery-item .image-thumb:hover .thumbnail-preview-hint {

@@ -797,6 +797,7 @@ test('random media pools isolate filters and revoke private video URLs when the 
       kind: 'folder',
       folderId: folder.id,
       mediaType: 'mixed',
+      slug: 'mixed-media',
       visibility: 'public',
       enabled: true,
       rateLimit: 0,
@@ -805,11 +806,18 @@ test('random media pools isolate filters and revoke private video URLs when the 
     assert.equal(created.statusCode, 201, created.body);
     const service = created.json();
     assert.equal(service.mediaType, 'mixed');
+    assert.equal(service.mode, 'redirect');
     const read = (suffix: string) => f.request('GET', service.url + suffix, undefined, {});
     assert.equal((await read('?mode=json&mediaType=video')).json().id, video.id);
     assert.equal((await read('?mode=json&mediaType=image')).json().id, picture.id);
-    assert.deepEqual((await read('')).rawPayload, f.png);
-    assert.equal((await read('')).headers['content-type'], 'image/png');
+    const bare = await read('');
+    assert.equal(bare.statusCode, 302, bare.body);
+    assert([picture.url, video.url].includes(bare.headers.location));
+    assert.equal((await read('?mediaType=video')).headers.location, video.url);
+    assert.equal((await read('?mediaType=image')).headers.location, picture.url);
+    const imageBytes = await read('?mode=image');
+    assert.deepEqual(imageBytes.rawPayload, f.png);
+    assert.equal(imageBytes.headers['content-type'], 'image/png');
     const random = (await read('?mode=json')).json();
     assert([picture.id, video.id].includes(random.id));
     assert.equal((await read('?mode=json&mediaType=video')).json().mime, 'video/mp4');
@@ -820,8 +828,30 @@ test('random media pools isolate filters and revoke private video URLs when the 
     const update = `/api/v1/admin/random-services/${service.id}`;
     const invalid = await f.request('PUT', update, { ...mixed, mediaType: 'video', mode: 'image' });
     assert.equal(invalid.statusCode, 400, invalid.body);
+    assert.equal((await f.request('PUT', update, { ...mixed, mode: 'image' })).statusCode, 400);
+    assert.equal(
+      (await f.request('PUT', update, { ...mixed, mediaType: 'image', mode: 'image' })).json().mode,
+      'image',
+    );
+    const narrowed = await f.request('PUT', update, {
+      ...mixed,
+      rules: [{ kind: 'exclude_image', resourceId: picture.id }],
+    });
+    assert.equal(narrowed.statusCode, 200, narrowed.body);
+    assert.equal(narrowed.json().mode, 'redirect');
+    for (const url of [service.url, `/api/v1/random/${service.id}`]) {
+      const response = await f.request('GET', url, undefined, {});
+      assert.equal(response.statusCode, 302, response.body);
+      assert.equal(response.headers.location, video.url);
+    }
     const { mediaType: _, ...originalBody } = mixed;
-    assert.equal((await f.request('PUT', update, originalBody)).json().mediaType, 'mixed');
+    assert.equal(
+      (await f.request('PUT', update, { ...originalBody, mode: 'json' })).statusCode,
+      200,
+    );
+    const saved = (await f.request('PUT', update, originalBody)).json();
+    assert.equal(saved.mediaType, 'mixed');
+    assert.equal(saved.mode, 'json');
 
     const videoOnly = {
       name: 'Video',

@@ -58,7 +58,9 @@ test('browser uploads MP4, then plays and seeks in the admin and public gallery'
   const serviceForm = page.getByRole('dialog');
   await serviceForm.getByLabel('服务名称').fill('随机视频验证');
   await serviceForm.getByLabel('接口 slug').fill('random-motion');
-  await serviceForm.getByLabel('媒体类型').selectOption('video');
+  await serviceForm.getByLabel('服务类型').selectOption('folder');
+  await serviceForm.getByLabel('来源文件夹').selectOption(folderId);
+  await serviceForm.getByLabel('媒体类型').selectOption('mixed');
   await expect(serviceForm.getByLabel('默认响应')).toHaveValue('redirect');
   await serviceForm.getByLabel('访问策略').selectOption('public');
   await serviceForm.getByLabel('启用此服务').check();
@@ -77,6 +79,33 @@ test('browser uploads MP4, then plays and seeks in the admin and public gallery'
   const redirect = await page.request.get('/api/v1/random/random-motion', { maxRedirects: 0 });
   expect(redirect.status()).toBe(302);
   expect(redirect.headers().location).toBe(address);
+  const direct = await page.context().newPage();
+  try {
+    const downloads: string[] = [];
+    direct.on('download', (download) => downloads.push(download.suggestedFilename()));
+    const response = await direct.goto('/api/v1/random/random-motion');
+    expect(response?.headers()['content-type']).toBe('video/mp4');
+    expect(response?.headers()['content-disposition']).toBe('inline');
+    await expect(direct).toHaveURL(new URL(address!, page.url()).href);
+    const video = direct.locator('video');
+    await expect.poll(() => video.evaluate((element) => element.readyState)).toBeGreaterThan(1);
+    await video.evaluate((element) => {
+      element.currentTime = 1.7;
+    });
+    await expect.poll(() => video.evaluate((element) => element.seeking)).toBe(false);
+    expect(await video.evaluate((element) => element.currentTime)).toBeGreaterThanOrEqual(1.65);
+    expect(downloads).toEqual([]);
+    await direct.goto('/');
+    const card = direct.locator('.service-card').filter({ hasText: '随机视频验证' });
+    await card.scrollIntoViewIfNeeded();
+    await expect
+      .poll(() =>
+        card.locator('[data-frame="current"] video').evaluate((media) => media.currentTime),
+      )
+      .toBeGreaterThan(0);
+  } finally {
+    await direct.close();
+  }
   await expect
     .poll(
       async () =>
@@ -92,23 +121,71 @@ test('browser uploads MP4, then plays and seeks in the admin and public gallery'
   try {
     const publicPage = await visitor.newPage();
     const randomApi = '**/api/v1/random/random-motion?mode=json';
-    await publicPage.route(
-      randomApi,
-      async (route) => {
-        const response = await route.fetch();
-        await route.fulfill({
-          response,
-          json: { ...(await response.json()), thumbnailState: 'pending' },
-        });
-      },
-      { times: 1 },
-    );
+    const slow = Promise.withResolvers<void>();
+    await publicPage.route('**/i/*?card=slow', async (route) => {
+      await slow.promise;
+      await route.continue();
+    });
+    await publicPage.route('**/i/*?card=broken', (route) => route.fulfill({ status: 404 }));
+    let draws = 0;
+    await publicPage.route(randomApi, async (route) => {
+      const response = await route.fetch();
+      const image = await response.json();
+      draws++;
+      const url =
+        draws === 2
+          ? image.url + '?card=broken'
+          : draws === 3
+            ? image.url + '?card=slow'
+            : image.url;
+      await route.fulfill({
+        response,
+        json: { ...image, url, thumbnailState: draws === 1 ? 'pending' : image.thumbnailState },
+      });
+    });
     await publicPage.goto(new URL('/', page.url()).href);
     const card = publicPage.locator('.service-card').filter({ hasText: '随机视频验证' });
-    await expect(card.getByText('暂无视频封面')).toBeVisible();
+    await card.scrollIntoViewIfNeeded();
+    const current = card.locator('[data-frame="current"] video');
+    await expect(current).toHaveAttribute('src', address!);
+    await expect(current).toHaveAttribute('playsinline', '');
+    await expect(current).toHaveAttribute('loop', '');
+    await expect.poll(() => current.evaluate((video) => video.currentTime)).toBeGreaterThan(0);
+    expect(await current.evaluate((video) => video.muted)).toBe(true);
     await expect(card.locator('.thumbnail-video-badge')).toHaveText('视频');
-    await card.getByRole('button', { name: '刷新 随机视频验证 视频' }).click();
-    await expect(card.locator('[data-frame="current"] img')).toBeVisible();
+    await card.getByRole('button', { name: '暂停视频' }).press('Enter');
+    await expect.poll(() => current.evaluate((video) => video.paused)).toBe(true);
+    await card.getByRole('button', { name: '播放视频' }).press('Enter');
+    await expect.poll(() => current.evaluate((video) => video.paused)).toBe(false);
+
+    const refresh = card.getByRole('button', { name: '刷新 随机视频验证 媒体' });
+    await refresh.press('Enter');
+    await expect(card.getByRole('status')).toHaveText('视频加载失败，请刷新重试');
+    await expect(current).toHaveAttribute('src', address!);
+    await refresh.press('Enter');
+    const previous = await current.elementHandle();
+    await expect(card.locator('[data-frame="incoming"] video')).toHaveAttribute(
+      'src',
+      /card=slow$/,
+    );
+    await expect(current).toHaveAttribute('src', address!);
+    slow.resolve();
+    await expect(current).toHaveAttribute('src', /card=slow$/);
+    await expect.poll(() => previous!.evaluate((video) => video.paused)).toBe(true);
+    await expect(refresh).toBeFocused();
+    await publicPage.setViewportSize({ width: 390, height: 400 });
+    await publicPage.evaluate(() => window.scrollTo(0, 0));
+    await expect(current).not.toBeInViewport();
+    await expect.poll(() => current.evaluate((video) => video.paused)).toBe(true);
+
+    await publicPage.setViewportSize({ width: 390, height: 844 });
+    await publicPage.emulateMedia({ reducedMotion: 'reduce' });
+    await publicPage.reload();
+    await card.scrollIntoViewIfNeeded();
+    await expect(card.getByRole('button', { name: '播放视频' })).toBeVisible();
+    expect(await current.evaluate((video) => video.currentTime)).toBe(0);
+    await card.getByRole('button', { name: '播放视频' }).press('Enter');
+    await expect.poll(() => current.evaluate((video) => video.currentTime)).toBeGreaterThan(0);
     await publicPage.goto(new URL(`/gallery?folderId=${folderId}`, page.url()).href);
     await publicPage.getByRole('combobox', { name: '筛选媒体类型' }).selectOption('video');
     await publicPage.getByRole('button', { name: '播放视频：motion-test.mp4' }).click();

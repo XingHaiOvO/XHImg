@@ -137,11 +137,11 @@ console.log(image.logicalUrl); // 站内地址，适合保存引用；私有地�
 
 管理和公开服务列表均返回 `slug`（未配置为 `null`）；配置后 `url` 优先使用 slug 地址。原有全站、文件夹和服务 ID 地址继续有效；更改或清除 slug 后旧别名失效。别名与原地址共享权限、限流和统计，API Key 授权仍使用服务 ID。
 
-服务配置的 `mediaType` 可为 `image`（默认）、`video` 或 `mixed`。管理和公开服务列表均返回该字段，更新时省略则保留原配置。已有服务升级后为 `image`。仅视频服务默认使用 `redirect`，并支持 `json`。混合服务的 `mode=image` 只返回图片二进制。
+服务配置的 `mediaType` 可为 `image`（默认）、`video` 或 `mixed`。管理和公开服务列表均返回该字段，更新时省略则保留原配置。仅视频和混合服务的默认响应可配置为 `redirect` 或 `json`，创建时省略 `mode` 使用 `redirect`。更新时省略 `mode` 会保留兼容的原配置。升级时，默认响应为 `image` 的混合服务会迁移到 `redirect`。调用混合服务时可显式传入 `?mode=image` 获取图片二进制。
 
 `mode=json` 和 `mode=redirect` 可用查询参数 `mediaType=image|video` 缩小候选范围。混合服务省略筛选时，从所有符合规则的图片与视频中抽取。请求类型与服务配置或模式冲突时返回 `400 INVALID_MEDIA_SELECTION`。
 
-例如 `GET /api/v1/random/wallpaper?mode=json&mediaType=video` 返回选中资源的 `mediaType`、`mime`、`url` 和原有信息字段。MP4 的 JSON `url` 与 302 `Location` 都是固定的站内播放地址。播放器应使用这次返回的地址发送后续分段请求，避免重新抽取。
+例如 `GET /api/v1/random/wallpaper?mode=json&mediaType=video` 返回选中资源的 `mediaType`、`mime`、`url` 和原有信息字段。MP4 的 JSON `url` 与 302 `Location` 都是固定的站内播放地址，播放响应使用 `Content-Type: video/mp4` 和 `Content-Disposition: inline`。播放器应使用这次返回的地址发送后续分段请求，避免重新抽取。
 
 私有站内链接默认签名五分钟，原资源与封面分别授权。读取时检查资源权限、签发会话或 Key、服务启用状态、当前媒体类型及来源规则。密钥撤销或权限变化会使站内签名立即失效。已经签发的 S3 图片地址仍可能使用至到期，见[图片地址与有效期](#图片地址与有效期)。
 

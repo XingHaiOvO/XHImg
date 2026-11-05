@@ -328,7 +328,7 @@ function ServiceEditor({ value, close, folders, reload }: any) {
                   setDraft({
                     ...draft,
                     mediaType,
-                    mode: mediaType === 'video' && draft.mode === 'image' ? 'redirect' : draft.mode,
+                    mode: mediaType !== 'image' && draft.mode === 'image' ? 'redirect' : draft.mode,
                   });
                 }}
               >
@@ -341,12 +341,12 @@ function ServiceEditor({ value, close, folders, reload }: any) {
               label="默认响应"
               hint={
                 draft.mediaType === 'mixed'
-                  ? '图片二进制仅抽取图片。JSON 和 302 可抽取图片或视频。'
+                  ? '无参数时可抽取图片或视频。调用时加上 mode=image 可直接获取图片。'
                   : undefined
               }
             >
               <select value={draft.mode} onChange={(e) => patch('mode', e.target.value)}>
-                {draft.mediaType !== 'video' && <option value="image">图片二进制</option>}
+                {draft.mediaType === 'image' && <option value="image">图片二进制</option>}
                 <option value="redirect">302 跳转</option>
                 <option value="json">JSON</option>
               </select>

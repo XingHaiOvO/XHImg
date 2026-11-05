@@ -11,6 +11,7 @@ import {
   FolderOpen,
   ImageOff,
   Aperture,
+  Pause,
   Play,
 } from 'lucide-react';
 import { api, useData, useNotice, copy, absolute, bytes } from './api';
@@ -247,7 +248,88 @@ export function Preview({
     </Modal>
   );
 }
-type ServiceFrame = { image: Partial<ImageInfo>; revision: number };
+type ServiceMedia = Partial<ImageInfo> & Pick<ImageInfo, 'url'>;
+type ServiceFrame = { image: ServiceMedia; revision: number };
+
+function ServiceVideo({
+  source,
+  poster,
+  active,
+  onReady,
+  onError,
+}: {
+  source: string;
+  poster?: string;
+  active: boolean;
+  onReady: () => void;
+  onError: () => void;
+}) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const intent = useRef<'play' | 'pause'>(undefined);
+  const [playing, setPlaying] = useState(false);
+  useEffect(() => {
+    const video = ref.current;
+    if (!video || !active) return;
+    const motion = matchMedia('(prefers-reduced-motion: reduce)');
+    let visible = false;
+    const syncPlayback = () => {
+      const wantsPlayback = intent.current ? intent.current === 'play' : !motion.matches;
+      if (visible && video.isConnected && wantsPlayback) {
+        void video.play().catch(() => {});
+      } else {
+        video.pause();
+      }
+    };
+    const observer = new IntersectionObserver(([entry]) => {
+      visible = entry.isIntersecting;
+      syncPlayback();
+    });
+    observer.observe(video);
+    motion.addEventListener('change', syncPlayback);
+    return () => {
+      observer.disconnect();
+      motion.removeEventListener('change', syncPlayback);
+      video.pause();
+    };
+  }, [active]);
+
+  return (
+    <>
+      <video
+        ref={ref}
+        src={source}
+        poster={poster}
+        muted
+        playsInline
+        loop
+        preload="auto"
+        onLoadedData={onReady}
+        onError={onError}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+      />
+      {active && (
+        <button
+          type="button"
+          className="refresh-button service-play-button"
+          aria-label={playing ? '暂停视频' : '播放视频'}
+          onClick={() => {
+            const video = ref.current!;
+            if (video.paused) {
+              intent.current = 'play';
+              void video.play().catch(() => {});
+            } else {
+              intent.current = 'pause';
+              video.pause();
+            }
+          }}
+        >
+          {playing ? <Pause size={16} /> : <Play size={16} />}
+        </button>
+      )}
+    </>
+  );
+}
 
 function ServiceImage({
   frame,
@@ -264,8 +346,8 @@ function ServiceImage({
   const thumbnail = useThumbnailSource(frame.image, !video);
   const layer = useRef<HTMLSpanElement>(null);
   const [loaded, setLoaded] = useState('');
-  const placeholder = video && (frame.image.thumbnailState !== 'ready' || thumbnail.unavailable);
-  const ready = placeholder || (loaded === thumbnail.source && !thumbnail.unavailable);
+  const [videoReady, setVideoReady] = useState(false);
+  const ready = video ? videoReady : loaded === thumbnail.source && !thumbnail.unavailable;
   useEffect(() => {
     if (!video && incoming && thumbnail.failed) onFailure(frame);
   }, [video, incoming, thumbnail.failed, frame, onFailure]);
@@ -290,16 +372,19 @@ function ServiceImage({
       data-ready={ready}
       aria-hidden={incoming || undefined}
     >
-      {placeholder ? (
-        <span className="service-empty service-video-placeholder">
-          <Play size={28} />
-          <span>暂无视频封面</span>
-        </span>
+      {video ? (
+        <ServiceVideo
+          source={frame.image.url}
+          poster={thumbnail.unavailable ? undefined : thumbnail.source}
+          active={!incoming}
+          onReady={() => setVideoReady(true)}
+          onError={() => onFailure(frame)}
+        />
       ) : (
         (!thumbnail.unavailable || !incoming) && (
           <img
             src={incoming ? thumbnail.source : loaded}
-            alt={frame.image.name ?? (video ? '随机视频封面' : '随机图片预览')}
+            alt={frame.image.name ?? '随机图片预览'}
             loading="lazy"
             onLoad={() => {
               thumbnail.onLoad();
@@ -336,7 +421,7 @@ function ServiceCard({ service }: { service: any }) {
     setError('');
     setBusy(true);
     try {
-      const image = await api<Partial<ImageInfo>>(url + '?mode=json', {
+      const image = await api<ServiceMedia>(url + '?mode=json', {
         signal: controller.signal,
       });
       if (!controller.signal.aborted) setIncoming({ image, revision });
@@ -374,7 +459,9 @@ function ServiceCard({ service }: { service: any }) {
   const onFailure = useCallback((frame: ServiceFrame) => {
     if (frame.revision !== previewRevision.current) return;
     setIncoming(undefined);
-    setError('预览图片加载失败，请刷新重试');
+    setError(
+      frame.image.format === 'mp4' ? '视频加载失败，请刷新重试' : '预览图片加载失败，请刷新重试',
+    );
   }, []);
   const kind =
     service.kind === 'global' ? '全站图片' : service.kind === 'folder' ? '文件夹服务' : '精选来源';
@@ -383,13 +470,7 @@ function ServiceCard({ service }: { service: any }) {
   return (
     <article className="service-card" aria-busy={busy || !!incoming}>
       <div className="service-preview">
-        <button
-          type="button"
-          className="image-thumb"
-          aria-label={`刷新 ${service.name} ${mediaLabel}`}
-          aria-disabled={busy || undefined}
-          onClick={() => void refresh()}
-        >
+        <div className="image-thumb">
           {!current && (
             <span className="service-empty">
               <Images size={28} />
@@ -407,7 +488,14 @@ function ServiceCard({ service }: { service: any }) {
                 />
               ),
           )}
-        </button>
+        </div>
+        <button
+          type="button"
+          className="service-refresh-area"
+          aria-label={`刷新 ${service.name} ${mediaLabel}`}
+          aria-disabled={busy || undefined}
+          onClick={() => void refresh()}
+        />
         {(error || (!current && !incoming)) && (
           <span className="service-preview-status" role="status">
             {busy ? `正在选择${mediaLabel}…` : error || `暂无可用${mediaLabel}`}
@@ -798,10 +886,10 @@ export function Docs() {
             <h2>随机图片</h2>
             <p>
               公开服务无需密钥。图片可直接返回二进制，图片和视频均可通过 302 或 JSON
-              返回地址。默认响应由服务配置决定。
+              返回地址。混合服务无参数时可抽中图片或视频，直接用作网页图片时加上 mode=image。
             </p>
             <Code
-              text={`# 直接返回图片\nGET ${safeEndpoint}?mode=image\n\n# 302 跳转\nGET ${safeEndpoint}?mode=redirect\n\n# 返回 JSON\nGET ${safeEndpoint}?mode=json`}
+              text={`# 使用服务的默认响应\nGET ${safeEndpoint}\n\n# 直接返回图片\nGET ${safeEndpoint}?mode=image\n\n# 302 跳转\nGET ${safeEndpoint}?mode=redirect\n\n# 返回 JSON\nGET ${safeEndpoint}?mode=json`}
             />
             <h3>用作网页图片</h3>
             <Code text={`<img src="${absolute(safeEndpoint)}?mode=image" alt="随机图片" />`} />

@@ -455,10 +455,14 @@ test('MP4 upload and tus preserve original video, generate posters and support a
     );
     assert.deepEqual([image.processingStatus, image.classificationStatus], ['skipped', 'skipped']);
     const original = await f.req('GET', image.logicalUrl, undefined, {});
+    assert.equal(original.statusCode, 200, original.body);
     assert.equal(original.headers['content-type'], 'video/mp4');
+    assert.equal(original.headers['content-disposition'], 'inline');
     assert.deepEqual(original.rawPayload, file);
     const head = await f.req('HEAD', image.logicalUrl, undefined, {});
     assert.equal(head.statusCode, 200, head.body);
+    assert.equal(head.headers['content-type'], 'video/mp4');
+    assert.equal(head.headers['content-disposition'], 'inline');
     assert.equal(head.headers['content-length'], String(file.length));
     assert.equal(head.headers['accept-ranges'], 'bytes');
     assert.equal(head.rawPayload.length, 0);
@@ -469,6 +473,8 @@ test('MP4 upload and tus preserve original video, generate posters and support a
     ] as const) {
       const partial = await f.req('GET', image.logicalUrl, undefined, { range });
       assert.equal(partial.statusCode, 206, partial.body);
+      assert.equal(partial.headers['content-type'], 'video/mp4');
+      assert.equal(partial.headers['content-disposition'], 'inline');
       assert.equal(partial.headers['content-range'], `bytes ${start}-${end}/${file.length}`);
       assert.deepEqual(partial.rawPayload, file.subarray(start, end + 1));
     }

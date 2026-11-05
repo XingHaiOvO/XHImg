@@ -16,13 +16,16 @@ import { imageResponse, signObject, sameImageLocation } from './image-urls.js';
 
 function mediaHeaders(reply: FastifyReply, image: Row, size: number, thumbnail: boolean) {
   const variant = thumbnail ? 'thumbnail' : 'original';
+  const video = !thumbnail && image.format === 'mp4';
   reply
     .header('ETag', `"${image.checksum}-${image.access_version}-${variant}"`)
-    .header('Content-Type', thumbnail ? 'image/webp' : image.mime)
+    .header('Content-Type', thumbnail ? 'image/webp' : video ? 'video/mp4' : image.mime)
     .header('Content-Length', size);
   reply.header(
     'Content-Disposition',
-    `inline; filename*=UTF-8''${encodeURIComponent(imageFilename(basename(image.name).replace(/[\r\n]/g, ''), thumbnail ? 'webp' : image.format))}`,
+    video
+      ? 'inline'
+      : `inline; filename*=UTF-8''${encodeURIComponent(imageFilename(basename(image.name).replace(/[\r\n]/g, ''), thumbnail ? 'webp' : image.format))}`,
   );
 }
 

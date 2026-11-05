@@ -174,9 +174,11 @@ export function registerRandom(app: FastifyInstance, ctx: Context) {
   const save = (sid: string, b: z.infer<typeof serviceSchema>, old?: Row) => {
     validate(b);
     const mediaType = b.mediaType ?? old?.media_type ?? 'image';
-    const responseMode = b.mode ?? (mediaType === 'video' ? 'redirect' : 'image');
-    if (mediaType === 'video' && responseMode === 'image')
-      fail(400, 'INVALID_MEDIA_SELECTION', '仅视频服务请选择 JSON 或 302 跳转');
+    const allowsImageDefault = mediaType === 'image';
+    const previousMode = !allowsImageDefault && old?.mode === 'image' ? undefined : old?.mode;
+    const responseMode = b.mode ?? previousMode ?? (allowsImageDefault ? 'image' : 'redirect');
+    if (!allowsImageDefault && responseMode === 'image')
+      fail(400, 'INVALID_MEDIA_SELECTION', '包含视频的服务请选择 JSON 或 302 跳转作为默认响应');
     ctx.db.tx(() => {
       if (
         b.slug &&

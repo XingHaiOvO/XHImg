@@ -188,6 +188,7 @@ test('S3 video streams only the requested bytes and cancels upstream on disconne
     const partial = await f.req('GET', jump.headers.location!, undefined, { range: 'bytes=2-9' });
     assert.equal(partial.statusCode, 206, partial.body);
     assert.equal(partial.headers['content-type'], 'video/mp4');
+    assert.equal(partial.headers['content-disposition'], 'inline');
     assert.equal(partial.headers['content-range'], `bytes 2-9/${f.png.length}`);
     assert.deepEqual(partial.rawPayload, f.png.subarray(2, 10));
     assert.equal(f.remote.counts.get, 1);
@@ -209,6 +210,15 @@ test('S3 video streams only the requested bytes and cancels upstream on disconne
       404,
     );
     assert.equal(f.remote.counts.get, 2);
+    await f.req('PATCH', `/api/v1/admin/images/${id}`, { visibility: 'public' });
+    for (const method of ['GET', 'HEAD'] as const) {
+      const full = await f.req(method, jump.headers.location!, undefined, {});
+      assert.equal(full.statusCode, 200, full.body);
+      assert.equal(full.headers['content-type'], 'video/mp4');
+      assert.equal(full.headers['content-disposition'], 'inline');
+      assert.equal(full.headers['content-length'], String(f.png.length));
+      assert.deepEqual(full.rawPayload, method === 'GET' ? f.png : Buffer.alloc(0));
+    }
   } finally {
     await f.close();
   }

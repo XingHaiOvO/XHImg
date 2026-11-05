@@ -82,11 +82,16 @@ const service = object(
     description: string,
     visibility: vis,
     enabled: boolean,
-    mode: { type: 'string', enum: ['image', 'redirect', 'json'] },
+    mode: {
+      type: 'string',
+      enum: ['image', 'redirect', 'json'],
+      description:
+        '服务默认响应。新建仅图片服务默认 image，包含视频的服务默认 redirect，只能配置 redirect 或 json。更新省略时保留兼容的原响应模式。',
+    },
     mediaType: {
       type: 'string',
       enum: ['image', 'video', 'mixed'],
-      description: '新建默认 image，更新省略保留原值。video 默认 redirect，只支持 JSON 和跳转。',
+      description: '新建默认 image，更新省略保留原值。mixed 无参数时从图片和视频中抽取。',
     },
     includeChildren: boolean,
     rateLimit: {
@@ -376,7 +381,7 @@ export function documentedApi(app: FastifyInstance) {
           parameter(
             'mode',
             { type: 'string', enum: ['image', 'redirect', 'json'] },
-            '默认使用服务的响应模式。image 只返回图片；视频使用 JSON 或 302。随机结果不可缓存。',
+            '默认使用服务的响应模式。混合服务无参数时从图片和视频中抽取；显式 image 只返回图片。视频通过 JSON 或 302 返回固定站内播放地址。随机结果不可缓存。',
           ),
           parameter(
             'mediaType',
