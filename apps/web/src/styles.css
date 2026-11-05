@@ -633,6 +633,13 @@ form > .button {
   position: absolute;
   inset: 0;
 }
+.service-video-placeholder {
+  background: var(--hover);
+}
+.service-image-layer .thumbnail-video-badge {
+  inset-inline-start: auto;
+  inset-inline-end: 12px;
+}
 .service-image-layer[data-frame='incoming'][data-ready='false'] {
   opacity: 0;
 }

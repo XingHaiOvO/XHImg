@@ -173,7 +173,19 @@ test('S3 video streams only the requested bytes and cancels upstream on disconne
     ).json().items[0];
     assert.equal(video.url, `/i/${id}`);
     assert.equal(video.urlExpiresAt, undefined);
-    const partial = await f.req('GET', video.url, undefined, { range: 'bytes=2-9' });
+    const service = await f.req('POST', '/api/v1/admin/random-services', {
+      kind: 'folder',
+      folderId: f.folder.id,
+      name: 'S3 视频',
+      enabled: true,
+      visibility: 'public',
+      mediaType: 'video',
+    });
+    assert.equal(service.statusCode, 201, service.body);
+    const jump = await f.req('GET', service.json().url, undefined, {});
+    assert.equal(jump.statusCode, 302);
+    assert.equal(jump.headers.location, video.url);
+    const partial = await f.req('GET', jump.headers.location!, undefined, { range: 'bytes=2-9' });
     assert.equal(partial.statusCode, 206, partial.body);
     assert.equal(partial.headers['content-type'], 'video/mp4');
     assert.equal(partial.headers['content-range'], `bytes 2-9/${f.png.length}`);

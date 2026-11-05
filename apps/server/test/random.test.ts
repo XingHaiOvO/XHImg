@@ -166,7 +166,15 @@ for (const mode of ['image', 'json', 'redirect']) {
   });
 }
 
-for (const change of ['permission', 'disabled', 'rule', 'folder', 'location', 'deleted'] as const) {
+for (const change of [
+  'permission',
+  'disabled',
+  'rule',
+  'folder',
+  'media type',
+  'location',
+  'deleted',
+] as const) {
   test(`image rejects ${change} changes during get and releases the unread stream`, async () => {
     const f = await fixture();
     try {
@@ -188,6 +196,9 @@ for (const change of ['permission', 'disabled', 'rule', 'folder', 'location', 'd
           case 'folder':
             f.ctx.db.run("INSERT INTO folders (id,name,created_at) VALUES ('other','other',0)");
             f.ctx.db.run("UPDATE random_endpoints SET folder_id='other'");
+            break;
+          case 'media type':
+            f.ctx.db.run("UPDATE random_endpoints SET media_type='video',mode='redirect'");
             break;
           case 'location':
             f.ctx.db.run('UPDATE images SET storage_version=storage_version+1');

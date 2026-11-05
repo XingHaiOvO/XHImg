@@ -223,13 +223,20 @@ export class Context {
         'SELECT * FROM random_endpoints WHERE id=? AND enabled=1',
         claim.serviceId,
       );
-      if (!service || !this.access.service(actor, service) || !this.matches(service, image))
+      if (
+        !service ||
+        !this.access.service(actor, service) ||
+        !this.matches(service, image) ||
+        (service.visibility === 'public' && image.effective_visibility !== 'public')
+      )
         fail(404, 'NOT_FOUND', '链接已失效');
     }
     return actor;
   }
   matches(endpoint: Row, image: Row): boolean {
-    if (image.format === 'mp4') return false;
+    const mediaType = image.format === 'mp4' ? 'video' : 'image';
+    if (endpoint.media_type !== 'mixed' && (endpoint.media_type ?? 'image') !== mediaType)
+      return false;
     if (
       endpoint.folder_id &&
       !(

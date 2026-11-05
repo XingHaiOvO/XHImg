@@ -95,7 +95,7 @@ curl -i -X PATCH 'http://localhost:9521/api/v1/resumable/upl_ID' \
 
 图片传输使用站点根路径 `GET /i/{id}`、`GET /t/{id}`，不加 `/api/v1` 前缀。访问时验证会话、Key 或 `sig` 查询参数；源文件仅允许管理员从专用下载接口获取。缓存与跳转规则见下节。
 
-MP4 通过 `GET /i/{id}` 在站内播放。本地和 S3 视频均支持 `HEAD` 和单段 `Range: bytes=起点-终点`，也可省略起点或终点。成功的分段请求返回 `206`、`Content-Range` 和 `Content-Length`，无法满足的范围返回 `416` 和 `Content-Range: bytes */文件大小`。每个请求独立检查权限，S3 播放字节经由站点服务器。`/t/{id}` 仍提供 WebP 封面。随机图接口只选择图片。
+MP4 通过 `GET /i/{id}` 在站内播放。本地和 S3 视频均支持 `HEAD` 和单段 `Range: bytes=起点-终点`，也可省略起点或终点。成功的分段请求返回 `206`、`Content-Range` 和 `Content-Length`，无法满足的范围返回 `416` 和 `Content-Range: bytes */文件大小`。每个请求独立检查权限，S3 播放字节经由站点服务器。`/t/{id}` 提供 WebP 封面。
 
 ## 图片地址与有效期
 
@@ -137,9 +137,15 @@ console.log(image.logicalUrl); // 站内地址，适合保存引用；私有地�
 
 管理和公开服务列表均返回 `slug`（未配置为 `null`）；配置后 `url` 优先使用 slug 地址。原有全站、文件夹和服务 ID 地址继续有效；更改或清除 slug 后旧别名失效。别名与原地址共享权限、限流和统计，API Key 授权仍使用服务 ID。
 
-`mode=image|redirect|json`，默认采用服务配置（初始为 image）。image 返回实际二进制；redirect 为 302；json 返回图片信息、逻辑地址，以及适用时的临时地址和到期字段。私有 URL 签名默认五分钟、原图缩略图分开授权，检查当前图片权限、签发会话/Key、服务启用状态及来源规则。密钥撤销或图片权限版本改变会使站内签名立即失效；已经签发的 S3 地址仍可能使用至到期，见[图片地址与有效期](#图片地址与有效期)。
+服务配置的 `mediaType` 可为 `image`（默认）、`video` 或 `mixed`。管理和公开服务列表均返回该字段，更新时省略则保留原配置。已有服务升级后为 `image`。仅视频服务默认使用 `redirect`，并支持 `json`。混合服务的 `mode=image` 只返回图片二进制。
 
-公开服务即使使用管理员会话调用，也只选公开图片。筛选先于随机，无候选时 404；对象暂时不可用时 503；缺失对象标为 missing，并最多三次重选。随机响应 no-store，可连续重复。
+`mode=json` 和 `mode=redirect` 可用查询参数 `mediaType=image|video` 缩小候选范围。混合服务省略筛选时，从所有符合规则的图片与视频中抽取。请求类型与服务配置或模式冲突时返回 `400 INVALID_MEDIA_SELECTION`。
+
+例如 `GET /api/v1/random/wallpaper?mode=json&mediaType=video` 返回选中资源的 `mediaType`、`mime`、`url` 和原有信息字段。MP4 的 JSON `url` 与 302 `Location` 都是固定的站内播放地址。播放器应使用这次返回的地址发送后续分段请求，避免重新抽取。
+
+私有站内链接默认签名五分钟，原资源与封面分别授权。读取时检查资源权限、签发会话或 Key、服务启用状态、当前媒体类型及来源规则。密钥撤销或权限变化会使站内签名立即失效。已经签发的 S3 图片地址仍可能使用至到期，见[图片地址与有效期](#图片地址与有效期)。
+
+公开服务即使使用管理员会话调用，也只选公开资源。筛选先于随机，无候选时返回 `404 NO_CANDIDATES`。对象暂时不可用时返回 503，缺失对象标为 missing，并最多尝试三个候选。随机响应 no-store，可连续重复。
 
 ## 管理接口
 

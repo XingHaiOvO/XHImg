@@ -30,10 +30,13 @@ test('slug migration preserves existing endpoints and rules and allows multiple 
       legacy.close();
     }
     store = new Store(dir);
-    assert.deepEqual(store.all('SELECT id,slug,calls FROM random_endpoints ORDER BY id'), [
-      { id: 'global', slug: null, calls: 42 },
-      { id: 'rnd_legacy', slug: null, calls: 7 },
-    ]);
+    assert.deepEqual(
+      store.all('SELECT id,slug,calls,media_type FROM random_endpoints ORDER BY id'),
+      [
+        { id: 'global', slug: null, calls: 42, media_type: 'image' },
+        { id: 'rnd_legacy', slug: null, calls: 7, media_type: 'image' },
+      ],
+    );
     assert.equal(
       store.one("SELECT resource_id FROM random_rules WHERE endpoint_id='rnd_legacy'")!.resource_id,
       'landscape',

@@ -7,7 +7,9 @@ import { fail, id, type Actor } from './security.js';
 import { ObjectMissing, type Objects } from './storage.js';
 import type { Row } from './db.js';
 import { sendImageObject } from './uploads.js';
+import { mediaTypeSchema } from './policies.js';
 const mode = z.enum(['image', 'redirect', 'json']);
+const mediaPool = z.enum(['image', 'video', 'mixed']);
 const rule = z.object({
   kind: z.enum(['source_folder', 'exclude_folder', 'exclude_image', 'tag']),
   resourceId: z.string().min(1).max(120),
@@ -32,12 +34,18 @@ const serviceSchema = z.object({
   description: z.string().max(1000).default(''),
   visibility: visibility.default('private'),
   enabled: z.boolean().default(false),
-  mode: mode.default('image'),
+  mode: mode.optional(),
+  mediaType: mediaPool.optional(),
   includeChildren: z.boolean().default(false),
   rateLimit: z.number().int().min(0).max(10000).default(60),
   rules: z.array(rule).max(100).default([]),
 });
-export function candidateIds(ctx: Context, endpoint: Row, actor: Actor) {
+export function candidateIds(
+  ctx: Context,
+  endpoint: Row,
+  actor: Actor,
+  mediaType: z.infer<typeof mediaPool> = endpoint.media_type ?? 'image',
+) {
   const cacheKey =
     endpoint.id +
     ':' +
@@ -45,15 +53,18 @@ export function candidateIds(ctx: Context, endpoint: Row, actor: Actor) {
       ? 'public'
       : actor.type === 'key'
         ? actor.key.id
-        : actor.type);
+        : actor.type) +
+    ':' +
+    mediaType;
   const cached = ctx.candidates.get(cacheKey);
   if (cached?.revision === ctx.access.revision) {
     ctx.candidates.delete(cacheKey);
     ctx.candidates.set(cacheKey, cached);
     return cached.ids;
   }
-  const where = ["state='ready'", 'deleted_at IS NULL', 'publication_hold=0', "format<>'mp4'"],
+  const where = ["state='ready'", 'deleted_at IS NULL', 'publication_hold=0'],
     args: any[] = [];
+  if (mediaType !== 'mixed') where.push(mediaType === 'video' ? "format='mp4'" : "format<>'mp4'");
   const folderSet = (ids: string[], exclude = false) => {
     where.push(`folder_id ${exclude ? 'NOT IN' : 'IN'} (SELECT value FROM json_each(?))`);
     args.push(JSON.stringify(ids));
@@ -132,6 +143,7 @@ export function* sampleCandidates(ids: readonly string[], limit = 3) {
 export function registerRandom(app: FastifyInstance, ctx: Context) {
   const info = (e: Row) => ({
     ...e,
+    mediaType: e.media_type,
     rules: ctx.db.all(
       'SELECT kind,resource_id,descendants FROM random_rules WHERE endpoint_id=?',
       e.id,
@@ -159,8 +171,12 @@ export function registerRandom(app: FastifyInstance, ctx: Context) {
       if (r.kind === 'exclude_image') ctx.image(r.resourceId);
     }
   };
-  const save = (sid: string, b: z.infer<typeof serviceSchema>, create: boolean) => {
+  const save = (sid: string, b: z.infer<typeof serviceSchema>, old?: Row) => {
     validate(b);
+    const mediaType = b.mediaType ?? old?.media_type ?? 'image';
+    const responseMode = b.mode ?? (mediaType === 'video' ? 'redirect' : 'image');
+    if (mediaType === 'video' && responseMode === 'image')
+      fail(400, 'INVALID_MEDIA_SELECTION', '仅视频服务请选择 JSON 或 302 跳转');
     ctx.db.tx(() => {
       if (
         b.slug &&
@@ -172,9 +188,9 @@ export function registerRandom(app: FastifyInstance, ctx: Context) {
         )
       )
         fail(409, 'SLUG_CONFLICT', '接口 slug 已被使用或与服务 ID 冲突');
-      if (create)
+      if (!old)
         ctx.db.run(
-          'INSERT INTO random_endpoints (id,kind,folder_id,name,description,visibility,enabled,mode,include_children,rate_limit) VALUES (?,?,?,?,?,?,?,?,?,?)',
+          'INSERT INTO random_endpoints (id,kind,folder_id,name,description,visibility,enabled,mode,media_type,include_children,rate_limit) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
           sid,
           b.kind,
           b.folderId,
@@ -182,19 +198,21 @@ export function registerRandom(app: FastifyInstance, ctx: Context) {
           b.description,
           b.visibility,
           +b.enabled,
-          b.mode,
+          responseMode,
+          mediaType,
           +b.includeChildren,
           b.rateLimit,
         );
       else
         ctx.db.run(
-          'UPDATE random_endpoints SET folder_id=?,name=?,description=?,visibility=?,enabled=?,mode=?,include_children=?,rate_limit=? WHERE id=?',
+          'UPDATE random_endpoints SET folder_id=?,name=?,description=?,visibility=?,enabled=?,mode=?,media_type=?,include_children=?,rate_limit=? WHERE id=?',
           b.folderId,
           b.name,
           b.description,
           b.visibility,
           +b.enabled,
-          b.mode,
+          responseMode,
+          mediaType,
           +b.includeChildren,
           b.rateLimit,
           sid,
@@ -221,14 +239,14 @@ export function registerRandom(app: FastifyInstance, ctx: Context) {
     const b = serviceSchema.parse(req.body);
     if (b.kind === 'global') fail(409, 'GLOBAL_EXISTS', '请编辑内置全站服务');
     reply.code(201);
-    return save(id('rnd'), b, true);
+    return save(id('rnd'), b);
   });
   app.put('/api/v1/admin/random-services/:id', async (req) => {
     const old = ctx.db.one('SELECT * FROM random_endpoints WHERE id=?', params(req).id);
     if (!old) fail(404, 'NOT_FOUND', '服务不存在');
     const b = serviceSchema.parse(req.body);
     if (old.kind !== b.kind) fail(400, 'IMMUTABLE_KIND', '服务类型不可更改');
-    return save(old.id, b, false);
+    return save(old.id, b, old);
   });
   app.delete('/api/v1/admin/random-services/:id', async (req) => {
     const endpoint = ctx.db.one('SELECT * FROM random_endpoints WHERE id=?', params(req).id);
@@ -250,6 +268,7 @@ export function registerRandom(app: FastifyInstance, ctx: Context) {
           description: e.description,
           kind: e.kind,
           slug: e.slug,
+          mediaType: out.mediaType,
           url: out.url,
           folderId: e.folder_id,
         };
@@ -281,6 +300,14 @@ export function registerRandom(app: FastifyInstance, ctx: Context) {
       endpoint.rate_limit,
     );
     const responseMode = mode.parse(query(req).mode ?? endpoint.mode);
+    const requested = mediaTypeSchema.optional().parse(query(req).mediaType);
+    const pool = mediaPool.parse(endpoint.media_type);
+    const mediaType = responseMode === 'image' ? 'image' : (requested ?? pool);
+    if (
+      (responseMode === 'image' && requested === 'video') ||
+      (pool !== 'mixed' && mediaType !== pool)
+    )
+      fail(400, 'INVALID_MEDIA_SELECTION', '请求的媒体类型与服务配置或响应模式不匹配');
     reply.header('Cache-Control', 'private, no-store');
     ctx.db.run(
       'UPDATE random_endpoints SET calls=calls+1,last_called=? WHERE id=?',
@@ -289,7 +316,7 @@ export function registerRandom(app: FastifyInstance, ctx: Context) {
     );
     let object: Awaited<ReturnType<Objects['get']>> | undefined;
     try {
-      const candidates = candidateIds(ctx, endpoint, actor);
+      const candidates = candidateIds(ctx, endpoint, actor, mediaType);
       let image: Row | undefined;
       for (const imageId of sampleCandidates(candidates)) {
         const item = ctx.image(imageId);
@@ -314,7 +341,7 @@ export function registerRandom(app: FastifyInstance, ctx: Context) {
           } else fail(503, 'STORAGE_UNAVAILABLE', '存储暂不可用');
         }
       }
-      if (!image) fail(404, 'NO_CANDIDATES', '没有符合条件的可用图片');
+      if (!image) fail(404, 'NO_CANDIDATES', '没有符合条件的可用媒体');
       // Refresh after storage I/O so a permission change cannot reuse an old row.
       const selectedImage = image;
       image = ctx.image(image.id);
@@ -357,6 +384,8 @@ export function registerRandom(app: FastifyInstance, ctx: Context) {
       if (responseMode === 'json')
         return {
           id: image.id,
+          mediaType: image.format === 'mp4' ? 'video' : 'image',
+          mime: image.mime,
           ...urls,
           width: image.width,
           height: image.height,

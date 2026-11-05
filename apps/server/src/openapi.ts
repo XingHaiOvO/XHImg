@@ -83,6 +83,11 @@ const service = object(
     visibility: vis,
     enabled: boolean,
     mode: { type: 'string', enum: ['image', 'redirect', 'json'] },
+    mediaType: {
+      type: 'string',
+      enum: ['image', 'video', 'mixed'],
+      description: '新建默认 image，更新省略保留原值。video 默认 redirect，只支持 JSON 和跳转。',
+    },
     includeChildren: boolean,
     rateLimit: {
       type: 'integer',
@@ -371,7 +376,12 @@ export function documentedApi(app: FastifyInstance) {
           parameter(
             'mode',
             { type: 'string', enum: ['image', 'redirect', 'json'] },
-            '默认使用服务的响应模式；随机结果不可缓存。',
+            '默认使用服务的响应模式。image 只返回图片；视频使用 JSON 或 302。随机结果不可缓存。',
+          ),
+          parameter(
+            'mediaType',
+            { type: 'string', enum: ['image', 'video'] },
+            '按服务允许的范围筛选媒体。视频使用返回的固定站内地址播放。',
           ),
         );
       if (method === 'post' && path.endsWith('/upload')) {

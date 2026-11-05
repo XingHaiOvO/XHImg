@@ -784,6 +784,127 @@ test('API operation scopes, non-inherited folders, expiry, revocation and signed
   }
 });
 
+test('random media pools isolate filters and revoke private video URLs when the pool changes', async () => {
+  const f = await fixture();
+  try {
+    const folder = await f.folder('mixed media', 'public');
+    const picture = (await f.upload(folder.id, 'public')).json();
+    const video = (await f.upload(folder.id, 'public')).json();
+    // Selection and transport use the stored format. Real MP4 bytes are covered in p1.test.ts.
+    f.ctx.db.run("UPDATE images SET format='mp4',mime='video/mp4' WHERE id=?", video.id);
+    const mixed = {
+      name: 'Mixed media',
+      kind: 'folder',
+      folderId: folder.id,
+      mediaType: 'mixed',
+      visibility: 'public',
+      enabled: true,
+      rateLimit: 0,
+    };
+    const created = await f.request('POST', '/api/v1/admin/random-services', mixed);
+    assert.equal(created.statusCode, 201, created.body);
+    const service = created.json();
+    assert.equal(service.mediaType, 'mixed');
+    const read = (suffix: string) => f.request('GET', service.url + suffix, undefined, {});
+    assert.equal((await read('?mode=json&mediaType=video')).json().id, video.id);
+    assert.equal((await read('?mode=json&mediaType=image')).json().id, picture.id);
+    assert.deepEqual((await read('')).rawPayload, f.png);
+    assert.equal((await read('')).headers['content-type'], 'image/png');
+    const random = (await read('?mode=json')).json();
+    assert([picture.id, video.id].includes(random.id));
+    assert.equal((await read('?mode=json&mediaType=video')).json().mime, 'video/mp4');
+    assert.equal(
+      (await read('?mode=image&mediaType=video')).json().error.code,
+      'INVALID_MEDIA_SELECTION',
+    );
+    const update = `/api/v1/admin/random-services/${service.id}`;
+    const invalid = await f.request('PUT', update, { ...mixed, mediaType: 'video', mode: 'image' });
+    assert.equal(invalid.statusCode, 400, invalid.body);
+    const { mediaType: _, ...originalBody } = mixed;
+    assert.equal((await f.request('PUT', update, originalBody)).json().mediaType, 'mixed');
+
+    const videoOnly = {
+      name: 'Video',
+      slug: 'video-random',
+      kind: 'custom',
+      mediaType: 'video',
+      visibility: 'private',
+      enabled: true,
+      rateLimit: 0,
+    };
+    const privateService = (
+      await f.request('POST', '/api/v1/admin/random-services', videoOnly)
+    ).json();
+    assert.equal(privateService.mode, 'redirect');
+    assert.equal(
+      (await f.request('GET', privateService.url + '?mode=json', undefined, {})).statusCode,
+      404,
+    );
+    assert.equal(
+      (await f.request('PATCH', `/api/v1/admin/images/${video.id}`, { visibility: 'private' }))
+        .statusCode,
+      200,
+    );
+    assert.equal((await read('?mode=json&mediaType=video')).json().error.code, 'NO_CANDIDATES');
+    const key = await f.key(
+      ['random', 'read', 'private:read'],
+      [
+        { kind: 'service', resourceId: privateService.id },
+        { kind: 'folder', resourceId: folder.id },
+      ],
+    );
+    const headers = { authorization: `Bearer ${key.key}` };
+    const response = await f.request('GET', privateService.url + '?mode=json', undefined, headers);
+    assert.equal(response.statusCode, 200, response.body);
+    const selected = response.json();
+    assert.equal(selected.mediaType, 'video');
+    assert.match(selected.url, /^\/i\/[^?]+\?sig=/);
+    assert.equal(
+      (await f.request('GET', selected.url, undefined, { range: 'bytes=0-3' })).statusCode,
+      206,
+    );
+    const redirect = await f.request('GET', privateService.url, undefined, headers);
+    assert.equal(redirect.statusCode, 302);
+    assert.equal(
+      (await f.request('GET', redirect.headers.location!, undefined, { range: 'bytes=4-7' }))
+        .statusCode,
+      206,
+    );
+    assert.equal(
+      (
+        await f.request(
+          'GET',
+          privateService.url + '?mode=json&mediaType=image',
+          undefined,
+          headers,
+        )
+      ).statusCode,
+      400,
+    );
+    const restricted = await f.request(
+      'PUT',
+      `/api/v1/admin/random-services/${privateService.id}`,
+      { ...videoOnly, mediaType: 'image' },
+    );
+    assert.equal(restricted.statusCode, 200, restricted.body);
+    assert.equal(
+      (await f.request('GET', selected.url, undefined, { range: 'bytes=0-3' })).statusCode,
+      404,
+    );
+    assert.equal(
+      (await f.request('GET', redirect.headers.location!, undefined, {})).statusCode,
+      404,
+    );
+    const publicList = await f.request('GET', '/api/v1/public/services', undefined, {});
+    assert.equal(
+      publicList.json().items.find((item: any) => item.id === service.id).mediaType,
+      'mixed',
+    );
+  } finally {
+    await f.close();
+  }
+});
+
 test('random filtering, three modes, public admin preview, empty sets and cache invalidation', async () => {
   const f = await fixture();
   try {

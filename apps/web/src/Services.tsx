@@ -23,6 +23,7 @@ const empty = {
   visibility: 'private',
   enabled: false,
   mode: 'image',
+  mediaType: 'image',
   includeChildren: false,
   rateLimit: 60,
   rules: [],
@@ -179,6 +180,7 @@ function normalize(s: any) {
     visibility: s.visibility,
     enabled: !!s.enabled,
     mode: s.mode,
+    mediaType: s.mediaType ?? 'image',
     includeChildren: !!(s.includeChildren ?? s.include_children),
     rateLimit: s.rateLimit ?? s.rate_limit ?? 60,
     rules: (s.rules ?? []).map((r: any) => ({
@@ -318,9 +320,33 @@ function ServiceEditor({ value, close, folders, reload }: any) {
           )}
           <h4 className="form-section">行为</h4>
           <div className="form-grid">
-            <Field label="默认响应">
+            <Field label="媒体类型">
+              <select
+                value={draft.mediaType}
+                onChange={(e) => {
+                  const mediaType = e.target.value;
+                  setDraft({
+                    ...draft,
+                    mediaType,
+                    mode: mediaType === 'video' && draft.mode === 'image' ? 'redirect' : draft.mode,
+                  });
+                }}
+              >
+                <option value="image">仅图片</option>
+                <option value="video">仅视频</option>
+                <option value="mixed">图片与视频混合</option>
+              </select>
+            </Field>
+            <Field
+              label="默认响应"
+              hint={
+                draft.mediaType === 'mixed'
+                  ? '图片二进制仅抽取图片。JSON 和 302 可抽取图片或视频。'
+                  : undefined
+              }
+            >
               <select value={draft.mode} onChange={(e) => patch('mode', e.target.value)}>
-                <option value="image">图片二进制</option>
+                {draft.mediaType !== 'video' && <option value="image">图片二进制</option>}
                 <option value="redirect">302 跳转</option>
                 <option value="json">JSON</option>
               </select>

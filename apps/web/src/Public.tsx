@@ -20,7 +20,7 @@ import { useImageSource } from './image-links';
 import { useSiteSettings } from './site-settings';
 import { animateEntrance } from './motion';
 
-function useThumbnailSource(image: Partial<ImageInfo>) {
+function useThumbnailSource(image: Partial<ImageInfo>, retryUnavailable = true) {
   const link = useImageSource(image, true);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -32,14 +32,14 @@ function useThumbnailSource(image: Partial<ImageInfo>) {
     setLoaded(false);
   }, [image.thumbnailUrl, image.thumbnailState]);
   useEffect(() => {
-    if (!link.direct && !loaded && (pending || failed) && attempt < 6) {
+    if (retryUnavailable && !link.direct && !loaded && (pending || failed) && attempt < 6) {
       const timer = setTimeout(() => {
         setFailed(false);
         setAttempt((n) => n + 1);
       }, 2000);
       return () => clearTimeout(timer);
     }
-  }, [loaded, pending, failed, attempt, link.direct]);
+  }, [loaded, pending, failed, attempt, link.direct, retryUnavailable]);
   return {
     source:
       link.source +
@@ -260,13 +260,15 @@ function ServiceImage({
   onReady: (frame: ServiceFrame) => void;
   onFailure: (frame: ServiceFrame) => void;
 }) {
-  const thumbnail = useThumbnailSource(frame.image);
+  const video = frame.image.format === 'mp4';
+  const thumbnail = useThumbnailSource(frame.image, !video);
   const layer = useRef<HTMLSpanElement>(null);
   const [loaded, setLoaded] = useState('');
-  const ready = loaded === thumbnail.source && !thumbnail.unavailable;
+  const placeholder = video && (frame.image.thumbnailState !== 'ready' || thumbnail.unavailable);
+  const ready = placeholder || (loaded === thumbnail.source && !thumbnail.unavailable);
   useEffect(() => {
-    if (incoming && thumbnail.failed) onFailure(frame);
-  }, [incoming, thumbnail.failed, frame, onFailure]);
+    if (!video && incoming && thumbnail.failed) onFailure(frame);
+  }, [video, incoming, thumbnail.failed, frame, onFailure]);
   useLayoutEffect(() => {
     if (!incoming || !ready || !layer.current) return;
     const animation = animateEntrance(layer.current, [{ opacity: 0 }, { opacity: 1 }], 240);
@@ -288,17 +290,29 @@ function ServiceImage({
       data-ready={ready}
       aria-hidden={incoming || undefined}
     >
-      {(!thumbnail.unavailable || !incoming) && (
-        <img
-          src={incoming ? thumbnail.source : loaded}
-          alt={frame.image.name ?? '随机图片预览'}
-          loading="lazy"
-          onLoad={() => {
-            thumbnail.onLoad();
-            if (incoming) setLoaded(thumbnail.source);
-          }}
-          onError={thumbnail.onError}
-        />
+      {placeholder ? (
+        <span className="service-empty service-video-placeholder">
+          <Play size={28} />
+          <span>暂无视频封面</span>
+        </span>
+      ) : (
+        (!thumbnail.unavailable || !incoming) && (
+          <img
+            src={incoming ? thumbnail.source : loaded}
+            alt={frame.image.name ?? (video ? '随机视频封面' : '随机图片预览')}
+            loading="lazy"
+            onLoad={() => {
+              thumbnail.onLoad();
+              if (incoming) setLoaded(thumbnail.source);
+            }}
+            onError={thumbnail.onError}
+          />
+        )
+      )}
+      {video && (
+        <span className="thumbnail-video-badge">
+          <Play size={12} /> 视频
+        </span>
       )}
     </span>
   );
@@ -364,13 +378,15 @@ function ServiceCard({ service }: { service: any }) {
   }, []);
   const kind =
     service.kind === 'global' ? '全站图片' : service.kind === 'folder' ? '文件夹服务' : '精选来源';
+  const mediaLabel =
+    service.mediaType === 'video' ? '视频' : service.mediaType === 'mixed' ? '媒体' : '图片';
   return (
     <article className="service-card" aria-busy={busy || !!incoming}>
       <div className="service-preview">
         <button
           type="button"
           className="image-thumb"
-          aria-label={`刷新 ${service.name} 图片`}
+          aria-label={`刷新 ${service.name} ${mediaLabel}`}
           aria-disabled={busy || undefined}
           onClick={() => void refresh()}
         >
@@ -394,7 +410,7 @@ function ServiceCard({ service }: { service: any }) {
         </button>
         {(error || (!current && !incoming)) && (
           <span className="service-preview-status" role="status">
-            {busy ? '正在选择图片…' : error || '暂无可用图片'}
+            {busy ? `正在选择${mediaLabel}…` : error || `暂无可用${mediaLabel}`}
           </span>
         )}
         <h3 className="service-name">{service.name}</h3>
@@ -430,7 +446,7 @@ function ServiceCard({ service }: { service: any }) {
         <div className="service-card-footer">
           <span>
             <RefreshCw size={12} />
-            点击图片刷新预览
+            点击封面刷新预览
           </span>
           <Link to={`/docs?endpoint=${encodeURIComponent(service.url)}`}>
             接口文档 <ArrowUpRight size={13} />
@@ -780,12 +796,20 @@ export function Docs() {
           </dl>
           <section id="random-images">
             <h2>随机图片</h2>
-            <p>公开服务无需密钥。支持直接图片、302 跳转与 JSON 三种响应，默认直接返回图片。</p>
+            <p>
+              公开服务无需密钥。图片可直接返回二进制，图片和视频均可通过 302 或 JSON
+              返回地址。默认响应由服务配置决定。
+            </p>
             <Code
               text={`# 直接返回图片\nGET ${safeEndpoint}?mode=image\n\n# 302 跳转\nGET ${safeEndpoint}?mode=redirect\n\n# 返回 JSON\nGET ${safeEndpoint}?mode=json`}
             />
             <h3>用作网页图片</h3>
-            <Code text={`<img src="${absolute(safeEndpoint)}" alt="随机图片" />`} />
+            <Code text={`<img src="${absolute(safeEndpoint)}?mode=image" alt="随机图片" />`} />
+            <h3>播放随机视频</h3>
+            <p>仅视频或混合服务可返回 MP4。先抽取一次，再用返回的固定地址播放或拖动进度。</p>
+            <Code
+              text={`const response = await fetch('${safeEndpoint}?mode=json&mediaType=video');\nif (!response.ok) throw new Error('视频暂不可用');\nconst video = await response.json();\ndocument.querySelector('video').src = video.url;`}
+            />
             <h3>JavaScript</h3>
             <Code
               text={`const response = await fetch('${safeEndpoint}?mode=json');\nif (!response.ok) throw new Error('图片暂不可用');\nconst image = await response.json();\nconsole.log(image.url, image.width, image.height);`}

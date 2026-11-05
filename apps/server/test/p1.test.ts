@@ -517,6 +517,25 @@ test('MP4 upload and tus preserve original video, generate posters and support a
     f.ctx.db.run("UPDATE random_endpoints SET enabled=1,visibility='public' WHERE id='global'");
     const random = await f.req('GET', '/api/v1/random', undefined, {});
     assert.equal(random.json().error.code, 'NO_CANDIDATES');
+    const configured = await f.req('PUT', '/api/v1/admin/random-services/global', {
+      kind: 'global',
+      name: '全站视频',
+      mediaType: 'video',
+      enabled: true,
+      visibility: 'public',
+      rateLimit: 0,
+    });
+    assert.equal(configured.statusCode, 200, configured.body);
+    const json = await f.req('GET', '/api/v1/random?mode=json', undefined, {});
+    assert.equal(json.statusCode, 200, json.body);
+    assert.equal(json.json().url, image.logicalUrl);
+    assert.equal(json.json().mime, 'video/mp4');
+    const jump = await f.req('GET', '/api/v1/random', undefined, {});
+    assert.equal(jump.statusCode, 302);
+    assert.equal(jump.headers.location, json.json().url);
+    const seek = await f.req('GET', jump.headers.location!, undefined, { range: 'bytes=4-19' });
+    assert.equal(seek.statusCode, 206, seek.body);
+    assert.deepEqual(seek.rawPayload, file.subarray(4, 20));
     assert.equal(
       (await f.req('POST', `/api/v1/admin/images/${image.id}/reprocess`)).json().error.code,
       'VIDEO_PROCESSING_UNSUPPORTED',
