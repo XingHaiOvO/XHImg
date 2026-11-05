@@ -745,8 +745,9 @@ export function Docs() {
           <section id="authorized-upload">
             <h2>授权上传</h2>
             <p>
-              每次请求一个文件。仅接受 JPG、PNG、WebP，最大
-              100MB（后台可调低），不接受动画。批量上传请分别提交；文件夹专属接口会固定目标文件夹。启用处理或分类时返回202及状态查询地址。
+              每次请求一个文件。支持静态 JPG、PNG、WebP，以及静态和动态 GIF，默认上限 100
+              MiB（后台可调低）。GIF 原样保存，最多 500 帧，所有帧合计最多 4000
+              万像素。启用适用的图片处理或 AI 分类时，返回 202 及状态查询地址。
             </p>
             <Code
               text={`curl -X POST '${absolute('/api/v1/upload')}?folderId=YOUR_FOLDER_ID&visibility=private' \\\n  -H 'Authorization: Bearer YOUR_API_KEY' \\\n  -F 'file=@photo.jpg'\n\nPOST /api/v1/folders/{folderId}/upload\nGET /api/v1/folders/{folderId}/images?page=1&limit=40`}

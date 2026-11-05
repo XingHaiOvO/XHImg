@@ -251,6 +251,187 @@ async function fixture() {
   };
 }
 
+function animationFrames() {
+  const width = 16;
+  const pageHeight = 8;
+  const frame = (color: number[]) =>
+    Buffer.from(Array.from({ length: width * pageHeight }, () => color).flat());
+  return sharp(Buffer.concat([frame([255, 0, 0]), frame([0, 0, 255])]), {
+    raw: { width, height: pageHeight * 2, pageHeight, channels: 3 },
+  });
+}
+
+test('static and animated GIF uploads preserve original bytes, serve GIF and generate a first-frame thumbnail', async () => {
+  const f = await fixture();
+  try {
+    const folder = await f.folder();
+    const processing = { enabled: true, targetFormat: 'jpg', maxWidth: 4, preserveOriginal: false };
+    const staticGif = await sharp(f.png).gif().toBuffer();
+    const still = await f.upload({ folderId: folder.id, processing }, staticGif);
+    assert.equal(still.statusCode, 201, still.body);
+    assert.equal(still.json().format, 'gif');
+    assert.deepEqual((await f.req('GET', still.json().url)).rawPayload, staticGif);
+
+    const gif = await animationFrames()
+      .gif({ delay: [90, 170], loop: 2 })
+      .toBuffer();
+    // The fixture deliberately submits a .png filename and MIME type.
+    const uploaded = await f.upload({ folderId: folder.id, visibility: 'public', processing }, gif);
+    assert.equal(uploaded.statusCode, 201, uploaded.body);
+    const image = uploaded.json();
+    assert.equal(image.format, 'gif');
+    assert.equal(image.mime, 'image/gif');
+    assert.deepEqual([image.width, image.height], [16, 8]);
+    assert.equal(image.processingStatus, 'skipped');
+    const published = await f.req('GET', image.logicalUrl, undefined, {});
+    assert.equal(published.headers['content-type'], 'image/gif');
+    assert.match(published.headers['content-disposition']!, /photo\.gif/);
+    assert.deepEqual(published.rawPayload, gif);
+    const metadata = await sharp(published.rawPayload, { animated: true }).metadata();
+    assert.deepEqual(
+      [metadata.pages, metadata.pageHeight, metadata.delay, metadata.loop],
+      [2, 8, [90, 170], 2],
+    );
+    assert.deepEqual(
+      (await f.req('GET', `/api/v1/admin/images/${image.id}/original`)).rawPayload,
+      gif,
+    );
+    const reprocess = await f.req('POST', `/api/v1/admin/images/${image.id}/reprocess`, {
+      processing,
+    });
+    assert.equal(reprocess.statusCode, 409);
+    assert.equal(reprocess.json().error.code, 'GIF_PROCESSING_UNSUPPORTED');
+    assert.equal(f.ctx.db.one("SELECT COUNT(*) AS n FROM jobs WHERE kind='process'")!.n, 0);
+
+    await f.worker.tick();
+    await f.worker.tick();
+    const thumb = await f.req('GET', image.logicalThumbnailUrl, undefined, {});
+    assert.equal(thumb.statusCode, 200, thumb.body);
+    assert.equal(thumb.headers['content-type'], 'image/webp');
+    const first = await sharp(thumb.rawPayload, { animated: true })
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    assert.deepEqual([first.info.width, first.info.height], [16, 8]);
+    assert(first.data[0]! > 240 && first.data[2]! < 15);
+
+    const list = await f.req('GET', '/api/v1/public/images', undefined, {});
+    assert.deepEqual(
+      list.json().items.map((entry: any) => entry.format),
+      ['gif'],
+    );
+    f.ctx.db.run("UPDATE random_endpoints SET enabled=1,visibility='public' WHERE id='global'");
+    const random = await f.req('GET', '/api/v1/random?mode=image', undefined, {});
+    assert.equal(random.headers['content-type'], 'image/gif');
+    assert.deepEqual(random.rawPayload, gif);
+
+    const url = await f.tusCreate(gif, {
+      folderId: folder.id,
+      filename: 'resume.gif',
+      processing: JSON.stringify(processing),
+    });
+    const split = Math.floor(gif.length / 2);
+    assert.equal((await f.tusPatch(url, gif.subarray(0, split))).statusCode, 204);
+    assert.equal((await f.tusPatch(url, gif.subarray(split), split)).statusCode, 204);
+    await f.worker.tick();
+    const receipt = (await f.req('GET', `/api/v1/uploads/${url.split('/').at(-1)}`)).json();
+    assert.equal(receipt.state, 'ready');
+    assert.equal(receipt.image.processingStatus, 'skipped');
+    assert.deepEqual((await f.req('GET', receipt.image.logicalUrl)).rawPayload, gif);
+  } finally {
+    await f.close();
+  }
+});
+
+test('GIF validation rejects malformed later frames and enforces declared canvas and frame budgets', async () => {
+  const f = await fixture();
+  try {
+    const gif = Buffer.from(
+      '474946383961010001008000004c6971ff000021ff0b4e45545343415045322e30030101000021f90405090000002c00000000010001000002024c010021f90405110000002c0000000001000100804c69710000ff02024c01003b',
+      'hex',
+    );
+    const brokenFrame = Buffer.from(gif);
+    brokenFrame[brokenFrame.length - 4] = 0xff; // Invalid LZW code in the second frame.
+    const largeCanvas = Buffer.from(gif);
+    largeCanvas.writeUInt16LE(5000, 6);
+    largeCanvas.writeUInt16LE(5000, 8);
+    const tooManyFrames = await sharp(Buffer.alloc(501 * 3), {
+      raw: { width: 1, height: 501, pageHeight: 1, channels: 3 },
+    })
+      .gif({ keepDuplicateFrames: true })
+      .toBuffer();
+    const webp = await animationFrames().webp().toBuffer();
+    for (const [buffer, status, error] of [
+      [gif.subarray(0, -5), 400, 'INVALID_IMAGE'],
+      [brokenFrame, 400, 'INVALID_IMAGE'],
+      [largeCanvas, 400, 'INVALID_IMAGE'],
+      [tooManyFrames, 400, 'INVALID_IMAGE'],
+      [webp, 415, 'ANIMATED_IMAGE'],
+    ] as const) {
+      const result = await f.upload({ visibility: 'public' }, buffer);
+      assert.equal(result.statusCode, status, result.body);
+      assert.equal(result.json().error.code, error);
+    }
+    const url = await f.tusCreate(brokenFrame, { filename: 'broken.gif', visibility: 'public' });
+    assert.equal((await f.tusPatch(url, brokenFrame)).statusCode, 204);
+    await f.worker.tick();
+    const receipt = (await f.req('GET', `/api/v1/uploads/${url.split('/').at(-1)}`)).json();
+    assert.equal(receipt.state, 'failed');
+    assert.equal(receipt.image, null);
+    assert.equal(f.ctx.db.one('SELECT COUNT(*) n FROM images')!.n, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test('GIF AI classification receives a first-frame JPEG while publication keeps the animation', async () => {
+  let target = '';
+  let preview: Buffer | undefined;
+  const server = createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const received = JSON.parse(Buffer.concat(chunks).toString());
+    const url = received.messages[1].content[1].image_url.url as string;
+    if (url.startsWith('data:image/jpeg;base64,'))
+      preview = Buffer.from(url.split(',')[1]!, 'base64');
+    res.setHeader('Content-Type', 'application/json');
+    res.end(
+      JSON.stringify({ choices: [{ message: { content: JSON.stringify({ folderId: target }) } }] }),
+    );
+  });
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+  const f = await fixture();
+  try {
+    target = (await f.folder('GIF category')).id;
+    const configured = await f.req('PUT', '/api/v1/admin/ai', {
+      enabled: true,
+      baseUrl: `http://127.0.0.1:${(server.address() as any).port}/v1`,
+      model: 'fixture',
+      folderIds: [target],
+    });
+    assert.equal(configured.statusCode, 200, configured.body);
+    const gif = await animationFrames().gif().toBuffer();
+    const uploaded = await f.upload(
+      { visibility: 'public', processing: { enabled: true, targetFormat: 'png' } },
+      gif,
+    );
+    assert.equal(uploaded.statusCode, 202, uploaded.body);
+    const image = uploaded.json();
+    assert.equal((await f.req('GET', image.logicalUrl, undefined, {})).statusCode, 404);
+    await f.worker.aiTick();
+    assert(preview);
+    const first = await sharp(preview).raw().toBuffer({ resolveWithObject: true });
+    assert.deepEqual([first.info.width, first.info.height], [16, 8]);
+    assert(first.data[0]! > 240 && first.data[2]! < 15);
+    const receipt = (await f.req('GET', image.statusUrl)).json();
+    assert.equal(receipt.state, 'ready');
+    assert.equal(receipt.image.processingStatus, 'skipped');
+    assert.deepEqual((await f.req('GET', image.logicalUrl, undefined, {})).rawPayload, gif);
+  } finally {
+    await f.close();
+    await new Promise<void>((done) => server.close(() => done()));
+  }
+});
+
 test('processing is asynchronous, keeps original, resizes without enlargement and JPEG flattens transparency', async () => {
   const f = await fixture();
   try {

@@ -39,7 +39,10 @@ export function ProcessingSettings() {
         }}
       >
         <section className="panel">
-          <Field label="单张图片上限（MB）" hint="1–100MB，最大4000万像素，不接受动画。">
+          <Field
+            label="单张图片上限（MB）"
+            hint="1–100MB，最大 4000 万像素。GIF 原样保存，最多 500 帧，按全部帧合计像素。"
+          >
             <input
               type="number"
               min="1"

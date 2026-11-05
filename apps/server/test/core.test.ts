@@ -888,8 +888,8 @@ test('upload rejects unsupported, corrupt, oversized and excessive pixels, witho
       (await f.upload('uncategorized', 'private', Buffer.from('<svg/>'))).statusCode,
       400,
     );
-    const gif = await sharp(f.png).gif().toBuffer();
-    assert.equal((await f.upload('uncategorized', 'private', gif)).statusCode, 415);
+    const tiff = await sharp(f.png).tiff().toBuffer();
+    assert.equal((await f.upload('uncategorized', 'private', tiff)).statusCode, 415);
     const huge = await sharp({
       create: { width: 7000, height: 6000, channels: 3, background: 'white' },
     })

@@ -57,6 +57,8 @@ export async function acceptFile(
   const prepared = prepareUpload(ctx, actor, options),
     info = await imageWork(() => inspectImage(path));
   if (info.size > uploadLimit(ctx)) fail(413, 'FILE_TOO_LARGE', '文件超过当前上传上限');
+  const shouldProcess = prepared.policy.enabled && info.format !== 'gif';
+  const hold = shouldProcess || prepared.classify;
   const uploadId = existingId ?? id('upl'),
     imageId = existingId
       ? ctx.db.one('SELECT image_id FROM upload_sessions WHERE id=?', uploadId)!.image_id
@@ -92,7 +94,7 @@ export async function acceptFile(
     fail(400, 'FILE_CHECKSUM_MISMATCH', '完整文件校验失败');
   if (ctx.db.one('SELECT id FROM images WHERE id=?', imageId))
     return {
-      async: prepared.policy.enabled || prepared.classify,
+      async: hold,
       uploadId,
       image: ctx.imageInfo(ctx.image(imageId)),
     };
@@ -117,8 +119,7 @@ export async function acceptFile(
       fail(403, 'AUTH_CHANGED', '分类权限已失效');
     if (!ctx.db.one('SELECT id FROM storage_backends WHERE id=? AND enabled=1', prepared.storageId))
       fail(503, 'STORAGE_DISABLED', '上传期间存储已禁用');
-    const folder = ctx.folder(prepared.folderId),
-      hold = prepared.policy.enabled || prepared.classify;
+    const folder = ctx.folder(prepared.folderId);
     if (
       ['canceled', 'expired'].includes(
         ctx.db.one('SELECT state FROM upload_sessions WHERE id=?', uploadId)!.state,
@@ -145,16 +146,16 @@ export async function acceptFile(
           ? 'public'
           : 'private',
         Date.now(),
-        prepared.policy.enabled ? 'processing' : 'ready',
+        shouldProcess ? 'processing' : 'ready',
         +hold,
-        prepared.policy.enabled ? 'pending' : 'skipped',
+        shouldProcess ? 'pending' : 'skipped',
         prepared.classify ? 'pending' : 'skipped',
-        prepared.policy.enabled ? objectKey : null,
-        prepared.policy.enabled ? info.size : 0,
-        prepared.policy.enabled ? info.format : null,
-        prepared.policy.enabled ? info.checksum : null,
+        shouldProcess ? objectKey : null,
+        shouldProcess ? info.size : 0,
+        shouldProcess ? info.format : null,
+        shouldProcess ? info.checksum : null,
       );
-      if (prepared.policy.enabled)
+      if (shouldProcess)
         ctx.db.run(
           'INSERT INTO jobs (id,image_id,kind,payload,created_at) VALUES (?,?,?,?,?)',
           id('job'),
@@ -184,7 +185,7 @@ export async function acceptFile(
       }
       ctx.db.run(
         'UPDATE upload_sessions SET state=?,confirmed_offset=length WHERE id=?',
-        prepared.policy.enabled ? 'processing' : prepared.classify ? 'classifying' : 'ready',
+        shouldProcess ? 'processing' : prepared.classify ? 'classifying' : 'ready',
         uploadId,
       );
       ctx.db.run("UPDATE upload_operations SET state='committed' WHERE id=?", uploadId);

@@ -293,7 +293,9 @@ export function UploadCenter({
       >
         <Upload size={28} />
         <strong>拖入图片，或点击选择</strong>
-        <span>JPG、PNG、WebP · 每张最多 {config.data?.maxUploadMB ?? 100}MB · 支持暂停与续传</span>
+        <span>
+          JPG、PNG、WebP、GIF · 每张最多 {config.data?.maxUploadMB ?? 100}MB · 支持暂停与续传
+        </span>
       </button>
       <div className="upload-destination-summary">
         <span role="group" aria-label="目标文件夹">
@@ -360,6 +362,7 @@ export function UploadCenter({
           onChange={(e) => setInherit(e.target.checked)}
         />
         {!inherit && <ProcessingEditor value={policy} onChange={setPolicy} />}
+        <p className="muted">GIF 原样保存，最多 500 帧，所有帧合计最多 4000 万像素。</p>
         <Field
           label="AI 分类"
           hint="指定文件夹默认不自动移动；明确启用后，可归入其他参与分类的文件夹。"
@@ -376,7 +379,7 @@ export function UploadCenter({
         className="sr-only"
         type="file"
         multiple
-        accept="image/jpeg,image/png,image/webp"
+        accept="image/jpeg,image/png,image/webp,image/gif,.gif"
         aria-label="选择上传图片"
         onChange={(e) => {
           void add(Array.from(e.target.files ?? []));
@@ -387,7 +390,7 @@ export function UploadCenter({
         ref={resumeInput}
         className="sr-only"
         type="file"
-        accept="image/jpeg,image/png,image/webp"
+        accept="image/jpeg,image/png,image/webp,image/gif,.gif"
         aria-label="选择原文件继续上传"
         onChange={(e) => {
           const file = e.target.files?.[0],

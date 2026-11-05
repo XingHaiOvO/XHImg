@@ -1272,28 +1272,32 @@ function ImageEditor({ image, close, folders, reload }: any) {
               <Button type="button" variant="ghost" asChild>
                 <a href={`/api/v1/admin/images/${image.id}/original`}>下载原始文件</a>
               </Button>
-              <details className="image-reprocess">
-                <summary>重新处理图片</summary>
-                <div className="image-reprocess-panel">
-                  <ProcessingEditor value={processing} onChange={setProcessing} />
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={action.pending || !processing.enabled}
-                    onClick={() =>
-                      void action.run(async () => {
-                        await api(
-                          `admin/images/${image.id}/reprocess`,
-                          json('POST', { processing }),
-                        );
-                        await reload();
-                      }, '已提交处理任务，当前可用版本保持可访问')
-                    }
-                  >
-                    提交处理任务
-                  </Button>
-                </div>
-              </details>
+              {image.format === 'gif' ? (
+                <p className="muted">GIF 原样保存，不能重新处理。</p>
+              ) : (
+                <details className="image-reprocess">
+                  <summary>重新处理图片</summary>
+                  <div className="image-reprocess-panel">
+                    <ProcessingEditor value={processing} onChange={setProcessing} />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={action.pending || !processing.enabled}
+                      onClick={() =>
+                        void action.run(async () => {
+                          await api(
+                            `admin/images/${image.id}/reprocess`,
+                            json('POST', { processing }),
+                          );
+                          await reload();
+                        }, '已提交处理任务，当前可用版本保持可访问')
+                      }
+                    >
+                      提交处理任务
+                    </Button>
+                  </div>
+                </details>
+              )}
             </div>
             <div className="image-editor-save">
               <Button

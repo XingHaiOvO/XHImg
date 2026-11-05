@@ -4,8 +4,9 @@ import type { Actor } from './security.js';
 import { fail } from './security.js';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { open, readFile, stat } from 'node:fs/promises';
 import sharp from './image-processing.js';
+import { inspectGif } from './gif.js';
 
 export const policyPatch = z.object({
   enabled: z.boolean().optional(),
@@ -63,31 +64,48 @@ export async function fileHash(path: string) {
   for await (const chunk of createReadStream(path)) digest.update(chunk);
   return digest.digest('hex');
 }
+const MAX_IMAGE_PIXELS = 40_000_000;
 export async function inspectImage(path: string) {
-  let metadata: sharp.Metadata;
+  const handle = await open(path, 'r');
+  const signature = Buffer.alloc(6);
   try {
-    metadata = await sharp(path, {
-      limitInputPixels: 40_000_000,
-      animated: true,
-      failOn: 'warning',
-    }).metadata();
-  } catch {
-    fail(400, 'INVALID_IMAGE', '图片损坏或超过4000万像素');
+    await handle.read(signature);
+  } finally {
+    await handle.close();
   }
-  if (!['jpeg', 'png', 'webp'].includes(metadata.format!))
-    fail(415, 'UNSUPPORTED_FORMAT', '仅支持 JPG、PNG、WebP');
-  if ((metadata.pages ?? 1) > 1) fail(415, 'ANIMATED_IMAGE', '不接受动画图片');
+  const gif = ['GIF87a', 'GIF89a'].includes(signature.toString('latin1'))
+    ? inspectGif(await readFile(path), MAX_IMAGE_PIXELS)
+    : undefined;
+  let metadata: sharp.Metadata | undefined;
+  if (!gif) {
+    try {
+      metadata = await sharp(path, {
+        limitInputPixels: MAX_IMAGE_PIXELS,
+        animated: true,
+        failOn: 'warning',
+      }).metadata();
+    } catch {
+      fail(400, 'INVALID_IMAGE', '图片损坏或超过4000万像素');
+    }
+    if (!['jpeg', 'png', 'webp'].includes(metadata.format!))
+      fail(415, 'UNSUPPORTED_FORMAT', '仅支持 JPG、PNG、WebP、GIF');
+    if ((metadata.pages ?? 1) > 1) fail(415, 'ANIMATED_IMAGE', '仅 GIF 支持动画');
+  }
   try {
-    await sharp(path, { limitInputPixels: 40_000_000, failOn: 'warning' }).stats();
+    await sharp(path, {
+      limitInputPixels: MAX_IMAGE_PIXELS,
+      animated: !!gif && gif.pages > 1,
+      failOn: 'warning',
+    }).stats();
   } catch {
     fail(400, 'INVALID_IMAGE', '图片无法完整解码');
   }
-  const format = metadata.format === 'jpeg' ? 'jpg' : metadata.format!;
+  const format = gif ? 'gif' : metadata?.format === 'jpeg' ? 'jpg' : metadata!.format!;
   return {
     format,
     mime: format === 'jpg' ? 'image/jpeg' : `image/${format}`,
-    width: metadata.autoOrient?.width ?? metadata.width ?? 0,
-    height: metadata.autoOrient?.height ?? metadata.height ?? 0,
+    width: gif?.width ?? metadata?.autoOrient?.width ?? metadata?.width ?? 0,
+    height: gif?.height ?? metadata?.autoOrient?.height ?? metadata?.height ?? 0,
     size: (await stat(path)).size,
     checksum: await fileHash(path),
   };

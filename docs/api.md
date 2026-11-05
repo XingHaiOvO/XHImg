@@ -52,7 +52,8 @@ curl -X POST 'http://localhost:9521/api/v1/upload?folderId=fld_ID&visibility=pub
 
 - `POST /upload`、`POST /folders/{folderId}/upload`：仅一个 multipart 文件。参数放在 URL：`folderId`、`visibility`、`storageId`。路径与查询文件夹冲突返回 400。默认未分类文件夹与 private；显式 storageId 还需存储授权。
 - 响应 201：返回图片信息，包括 ID、名称、文件夹、权限、格式、尺寸、处理状态和访问地址；地址字段见[图片地址与有效期](#图片地址与有效期)。
-- 默认上限 100MiB，可由管理员调低；4000 万像素，仅静态 JPG/PNG/WebP。可选查询 `processing` 为 JSON 策略，`classify=true|false`。策略字段：enabled、compress、targetFormat（keep/jpg/png/webp）、quality（1–100，默认 80）、maxWidth/maxHeight（null 不限制）、preserveOriginal（默认 true）。只覆盖提交字段，优先级请求 > 文件夹 > 系统。
+- 默认上限 100 MiB，可由管理员调低。支持静态 JPG、PNG、WebP，以及静态和动态 GIF，最多 4000 万像素。GIF 最多 500 帧，像素按所有帧的画布合计，超限返回 `400 INVALID_IMAGE`。按文件内容识别格式，GIF 的 MIME 为 `image/gif`。
+- 可选查询 `processing` 为 JSON 策略，`classify=true|false`。策略字段包括 enabled、compress、targetFormat（keep/jpg/png/webp）、quality（1–100，默认 80）、maxWidth/maxHeight（null 不限制）和 preserveOriginal（默认 true）。只覆盖提交字段，优先级请求 > 文件夹 > 系统。GIF 原样保存，缩略图和 AI 预览使用首帧。普通 GIF 上传在无需 AI 分类时返回 `201`，需要分类时返回 `202`。手动重新处理 GIF 返回 `409 GIF_PROCESSING_UNSUPPORTED`。
 - 启用处理或分类时响应 202，保留图片字段并增加 `uploadId`、`imageId`、`statusUrl`。传输成功不代表已发布；查询状态至 ready。处理或新图分类未完成时，非管理员原图、缩略图、查询与随机访问均隔离。
 - 当前图片的站内逻辑地址保持稳定。上传返回私有图片的裸地址不意味着可匿名访问；外部客户端可持 Key 请求，或在授权图片列表/随机 JSON 中取得短期签名 URL。
 

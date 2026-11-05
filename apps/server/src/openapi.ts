@@ -386,7 +386,7 @@ export function documentedApi(app: FastifyInstance) {
           ),
         );
         op.description =
-          '单文件默认最大100MB，可由管理员调低；JPG/PNG/WebP，最多4000万像素，不接受动画。参数通过查询字符串传递。';
+          '单文件默认最大100 MiB，可由管理员调低。支持静态 JPG、PNG、WebP 及静态或动态 GIF，最多4000万像素。GIF 最多500帧，所有帧合计不超过4000万画布像素，原样保存并跳过图片处理。参数通过查询字符串传递。';
         op.responses = {
           '201': { description: '未启用异步处理时，保留原响应。' },
           '202': {
