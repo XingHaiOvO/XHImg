@@ -1,5 +1,5 @@
 import { useUrlTab } from './navigation';
-import { useState, useEffect, useId, lazy, Suspense } from 'react';
+import { useState, useEffect, useId, useRef, lazy, Suspense } from 'react';
 import {
   Plus,
   HardDrive,
@@ -22,6 +22,7 @@ import {
   Check,
   Modal,
   Busy,
+  Pagination,
 } from './components/ui';
 import { useImageSource } from './image-links';
 import type { ImageInfo } from '../../../packages/shared/src/index';
@@ -984,10 +985,10 @@ function SiteSettings() {
         open={galleryOpen}
         onOpenChange={setGalleryOpen}
         title="从图库选择"
-        description="最近 40 张图片。首页背景应选择访客可访问的公开图片。"
+        description="从公开图库选择首页背景。可按名称、标签或文件夹查找。"
       >
         {galleryOpen && (
-          <BackgroundGallery
+          <SiteImagePicker
             onSelect={(url) => {
               setDraft({ ...draft, homeBackgroundUrl: url });
               setGalleryOpen(false);
@@ -999,10 +1000,10 @@ function SiteSettings() {
         open={logoGalleryOpen}
         onOpenChange={setLogoGalleryOpen}
         title="选择站点图标"
-        description="最近 40 张图片。请选择访客可访问的公开图片，建议使用 1:1 的正方形图片。"
+        description="从公开图库选择站点图标，建议使用 1:1 的正方形图片。"
       >
         {logoGalleryOpen && (
-          <BackgroundGallery
+          <SiteImagePicker
             onSelect={(url) => {
               setDraft({ ...draft, logoUrl: url });
               setLogoGalleryOpen(false);
@@ -1013,33 +1014,117 @@ function SiteSettings() {
     </>
   );
 }
-function BackgroundGallery({ onSelect }: { onSelect: (url: string) => void }) {
-  const images = useData<{ items: ImageInfo[] }>('admin/images?page=1');
-  if (images.loading) return <Busy />;
-  if (images.error) return <QueryFeedback query={images} />;
+const SITE_IMAGE_PAGE_SIZE = 40;
+type PickerImage = Pick<
+  ImageInfo,
+  'id' | 'name' | 'logicalUrl' | 'thumbnailUrl' | 'thumbnailUrlExpiresAt' | 'logicalThumbnailUrl'
+>;
+
+function SiteImagePicker({ onSelect }: { onSelect: (url: string) => void }) {
+  const [search, setSearch] = useState('');
+  const [criteria, setCriteria] = useState({ search: '', folderId: '', page: 1 });
+  const results = useRef<HTMLDivElement>(null);
+  const folders = useData<{ items: { id: string; name: string }[] }>('public/folders');
+  const params = new URLSearchParams({
+    page: String(criteria.page),
+    limit: String(SITE_IMAGE_PAGE_SIZE),
+    sort: 'newest',
+  });
+  if (criteria.search) params.set('search', criteria.search);
+  if (criteria.folderId) params.set('folderId', criteria.folderId);
+  const images = useData<{ items: PickerImage[]; total: number }>(`public/images?${params}`);
+  const lastPage = Math.max(1, Math.ceil((images.data?.total ?? 0) / SITE_IMAGE_PAGE_SIZE));
+  const outOfRange = !!images.data && criteria.page > lastPage;
+  const filtered = !!(criteria.search || criteria.folderId);
+  useEffect(() => {
+    const term = search.trim();
+    const timer = setTimeout(() => {
+      setCriteria((current) =>
+        current.search === term ? current : { ...current, search: term, page: 1 },
+      );
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [search]);
+  useEffect(() => {
+    if (outOfRange) {
+      setCriteria((current) => (current === criteria ? { ...current, page: lastPage } : current));
+    }
+  }, [criteria, lastPage, outOfRange]);
+
   return (
     <div className="settings-gallery">
-      <QueryFeedback query={images} backgroundOnly />
-      {images.data?.items.length ? (
-        <div className="settings-gallery-grid">
-          {images.data.items.slice(0, 40).map((image) => (
-            <BackgroundChoice key={image.id} image={image} onSelect={onSelect} />
-          ))}
-        </div>
-      ) : (
-        <div className="empty">
-          <ImageIcon size={28} />
-          <p>图库中还没有图片</p>
+      <div className="settings-gallery-filters">
+        <Field label="搜索图片名称或标签">
+          <input
+            type="search"
+            maxLength={120}
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </Field>
+        <Field label="筛选文件夹">
+          <select
+            value={criteria.folderId}
+            disabled={!folders.data}
+            onChange={(event) =>
+              setCriteria({ search: search.trim(), folderId: event.target.value, page: 1 })
+            }
+          >
+            <option value="">所有公开文件夹</option>
+            {folders.data?.items.map((folder) => (
+              <option key={folder.id} value={folder.id}>
+                {folder.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+      {(folders.error || folders.refreshError || folders.refreshing) && (
+        <div role="group" aria-label="公开文件夹">
+          <QueryFeedback query={folders} />
         </div>
       )}
+      <div ref={results} tabIndex={-1} role="region" aria-label="选图结果">
+        {images.loading || outOfRange ? (
+          <Busy />
+        ) : images.error ? (
+          <QueryFeedback query={images} />
+        ) : images.data?.items.length ? (
+          <>
+            <p className="muted settings-gallery-count" role="status">
+              共 {images.data.total} 张图片
+            </p>
+            <div className="settings-gallery-grid">
+              {images.data.items.map((image) => (
+                <SiteImageChoice key={image.id} image={image} onSelect={onSelect} />
+              ))}
+            </div>
+            <Pagination
+              total={images.data.total}
+              page={criteria.page}
+              pageSize={SITE_IMAGE_PAGE_SIZE}
+              onChange={(page) => {
+                setCriteria((current) => ({ ...current, page }));
+                results.current?.focus({ preventScroll: true });
+                results.current?.scrollIntoView({ block: 'start' });
+              }}
+            />
+          </>
+        ) : (
+          <div className="empty" role="status">
+            <ImageIcon size={28} />
+            <p>{filtered ? '没有符合条件的公开图片' : '图库中还没有公开图片'}</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
-function BackgroundChoice({
+function SiteImageChoice({
   image,
   onSelect,
 }: {
-  image: ImageInfo;
+  image: PickerImage;
   onSelect: (url: string) => void;
 }) {
   const preview = useImageSource(image, true);
@@ -1047,7 +1132,7 @@ function BackgroundChoice({
     <button
       type="button"
       className="settings-gallery-choice"
-      aria-label={`选择背景：${image.name}`}
+      aria-label={`选择图片：${image.name}`}
       title={image.name}
       onClick={() =>
         onSelect(new URL(image.logicalUrl || `/i/${image.id}`, window.location.origin).href)
