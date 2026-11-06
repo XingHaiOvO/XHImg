@@ -42,6 +42,10 @@ test('browser uploads MP4, then plays and seeks in the admin and public gallery'
   await input.setInputFiles({ name: 'motion-test.mp4', mimeType: 'video/mp4', buffer: file });
   await expect(upload.getByText('上传成功', { exact: true })).toBeVisible({ timeout: 20_000 });
   await upload.getByRole('button', { name: '关闭', exact: true }).click();
+  const mediaFilter = page.getByRole('combobox', { name: '筛选媒体类型' });
+  await mediaFilter.selectOption('image');
+  await expect(page.getByRole('heading', { name: '没有符合条件的资源' })).toBeVisible();
+  await mediaFilter.selectOption('video');
   await page.getByRole('button', { name: '查看 motion-test.mp4', exact: true }).click();
   const player = page.getByRole('dialog', { name: 'motion-test.mp4' }).locator('video');
   await expect

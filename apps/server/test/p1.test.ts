@@ -6,7 +6,6 @@ import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { createServer, request as httpRequest } from 'node:http';
 import sharp from 'sharp';
-import Database from 'better-sqlite3';
 import { createApp } from '../src/app.js';
 import { queueProcessing } from '../src/processing.js';
 import { enqueueClassification } from '../src/organization.js';
@@ -14,99 +13,6 @@ import { recoverResumable, expireResumable } from '../src/resumable.js';
 import { testVideo, videoToolsAvailable } from './video-fixture.js';
 
 const digest = (buffer: Buffer) => createHash('sha256').update(buffer).digest('hex');
-
-test('filename repair migration fixes converted names once and preserves unprocessed or matching names', async () => {
-  const db = new Database(':memory:');
-  try {
-    db.exec(
-      'CREATE TABLE images(name TEXT,format TEXT,processing_status TEXT,access_version INTEGER DEFAULT 1)',
-    );
-    const cases = [
-      ['旅行.回忆.png', 'webp', 'completed', '旅行.回忆.webp'],
-      ['无后缀', 'jpg', 'completed', '无后缀.jpg'],
-      ['.hidden', 'png', 'completed', '.hidden.png'],
-      ['PHOTO.JPEG', 'jpg', 'completed', 'PHOTO.JPEG'],
-      ['custom.png', 'webp', 'failed', 'custom.png'],
-      ['photo.png', 'png', 'skipped', 'photo.png'],
-      ['strange.gif', 'webp', 'completed', 'strange.webp'],
-    ];
-    for (const [name, format, status] of cases)
-      db.prepare('INSERT INTO images(name,format,processing_status) VALUES (?,?,?)').run(
-        name,
-        format,
-        status,
-      );
-    const sql = await readFile(
-      new URL('../migrations/0003_image_filenames.sql', import.meta.url),
-      'utf8',
-    );
-    db.exec(sql);
-    const rows = db.prepare('SELECT name,access_version FROM images ORDER BY rowid').all() as {
-      name: string;
-      access_version: number;
-    }[];
-    assert.deepEqual(
-      rows.map((row) => row.name),
-      cases.map((row) => row[3]),
-    );
-    assert.deepEqual(
-      rows.map((row) => row.access_version),
-      [2, 2, 2, 1, 1, 1, 2],
-    );
-    db.exec(sql);
-    assert.deepEqual(
-      db.prepare('SELECT name,access_version FROM images ORDER BY rowid').all(),
-      rows,
-    );
-  } finally {
-    db.close();
-  }
-});
-
-test('P0 migration retains stable IDs, objects and permissions without automatic jobs', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'xhimg-upgrade-'));
-  let runtime: Awaited<ReturnType<typeof createApp>> | undefined;
-  try {
-    const database = new Database(join(dir, 'xhimg.sqlite'));
-    database.exec(await readFile(new URL('../migrations/0001.sql', import.meta.url), 'utf8'));
-    database.exec(
-      "CREATE TABLE migrations(name TEXT PRIMARY KEY,applied_at INTEGER NOT NULL); INSERT INTO migrations VALUES ('0001.sql',0); INSERT INTO storage_backends VALUES ('local','Local','local','{}',1,1); INSERT INTO folders(id,name,visibility,effective_visibility,created_at) VALUES ('old','Old','public','public',0);",
-    );
-    database
-      .prepare(
-        "INSERT INTO images(id,folder_id,storage_id,object_key,thumb_key,name,format,mime,size,width,height,checksum,visibility,effective_visibility,created_at) VALUES ('stable','old','local','originals/stable.png','thumbnails/stable.webp','old.png','png','image/png',1,1,1,'unchanged','public','public',0)",
-      )
-      .run();
-    const backup = join(dir, 'p0.sqlite');
-    await database.backup(backup);
-    database.close();
-    runtime = await createApp({
-      dir,
-      masterKey: 'ad'.repeat(32),
-      publicUrl: 'http://localhost',
-      workers: false,
-    });
-    const old = runtime.ctx.image('stable');
-    assert.equal(old.object_key, 'originals/stable.png');
-    assert.equal(old.effective_visibility, 'public');
-    assert.equal(old.checksum, 'unchanged');
-    assert.equal(old.publication_hold, 0);
-    assert.equal(old.processing_status, 'skipped');
-    assert.equal(old.classification_status, 'skipped');
-    assert.equal(runtime.ctx.db.one('SELECT COUNT(*) n FROM jobs')!.n, 0);
-    const snapshot = new Database(backup, { readonly: true });
-    assert(
-      !snapshot
-        .prepare('PRAGMA table_info(images)')
-        .all()
-        .some((column: any) => column.name === 'source_key'),
-    );
-    snapshot.close();
-  } finally {
-    await runtime?.app.close();
-    await rm(dir, { recursive: true, force: true });
-  }
-});
 
 test('a processing switch transaction failure preserves old bytes and cleans the uncommitted new object', async () => {
   const f = await fixture();

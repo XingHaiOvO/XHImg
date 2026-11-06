@@ -25,7 +25,7 @@ COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/apps/server/package.json ./apps/server/package.json
 COPY --from=build --chown=node:node /app/apps/server/node_modules ./apps/server/node_modules
 COPY --from=build --chown=node:node /app/apps/server/dist ./apps/server/dist
-COPY --from=build --chown=node:node /app/apps/server/migrations ./apps/server/migrations
+COPY --from=build --chown=node:node /app/apps/server/migrations/init.sql ./apps/server/migrations/init.sql
 COPY --from=build --chown=node:node /app/apps/web/dist ./apps/web/dist
 COPY --chown=node:node LICENSE THIRD_PARTY_NOTICES.md ./
 RUN mkdir -p /app/data && chown node:node /app/data

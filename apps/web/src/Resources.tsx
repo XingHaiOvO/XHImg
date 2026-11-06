@@ -291,6 +291,7 @@ export function Resources() {
     [page, setPage] = useState(1),
     [search, setSearch] = useState(''),
     [filter, setFilter] = useState(''),
+    [mediaType, setMediaType] = useState(''),
     [selected, setSelected] = useState<string[]>([]),
     [createOpen, setCreateOpen] = useState(false),
     [uploadOpen, setUploadOpen] = useState(false),
@@ -317,23 +318,29 @@ export function Resources() {
     setTab('图片');
     setTreeOpen(false);
   }, [folderId]);
-  const images = useData(
-      `admin/images?${new URLSearchParams({ folderId, search: filter, page: String(page) })}`,
-    ),
+  const imageParams = new URLSearchParams({ folderId, search: filter, page: String(page) });
+  if (mediaType) imageParams.set('mediaType', mediaType);
+  const imageQuery = imageParams.toString();
+  const hasFilters = !!(filter || mediaType);
+  const images = useData(`admin/images?${imageQuery}`),
     folder = folders.data?.items.find((f: any) => f.id === folderId),
     allFolders = folders.data?.items ?? [];
   const previousPage = useRef<{ key: string; ids: string[] } | undefined>(undefined);
   useEffect(() => {
     if (!images.data) return;
-    const key = JSON.stringify([folderId, filter, page]);
     const ids = images.data.items.map((image: any) => image.id as string);
     const previous = previousPage.current;
-    if (previous?.key === key)
+    if (previous?.key === imageQuery)
       setSelected((selected) =>
         selected.filter((id) => !previous.ids.includes(id) || ids.includes(id)),
       );
-    previousPage.current = { key, ids };
-  }, [images.data, folderId, filter, page]);
+    previousPage.current = { key: imageQuery, ids };
+  }, [images.data, imageQuery]);
+  const changeMediaType = (value: string) => {
+    setMediaType(value);
+    setSelected([]);
+    setPage(1);
+  };
   const reload = async () => {
     await Promise.all([folders.reload(), images.reload()]);
   };
@@ -456,6 +463,15 @@ export function Resources() {
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
+                <select
+                  aria-label="筛选媒体类型"
+                  value={mediaType}
+                  onChange={(e) => changeMediaType(e.target.value)}
+                >
+                  <option value="">图片和视频</option>
+                  <option value="image">仅图片</option>
+                  <option value="video">仅视频</option>
+                </select>
                 <Button variant="ghost" onClick={() => void reload()} aria-label="刷新图片">
                   <RefreshCw size={16} />
                 </Button>
@@ -469,7 +485,7 @@ export function Resources() {
                     迁移存储
                   </Button>
                 )}
-                <span className="resource-count muted">共 {images.data?.total ?? 0} 张</span>
+                <span className="resource-count muted">共 {images.data?.total ?? 0} 项</span>
               </div>
               <div className="selection-slot">
                 {selected.length > 0 ? (
@@ -636,15 +652,26 @@ export function Resources() {
               ) : (
                 <div className="empty">
                   <FolderOpen size={36} />
-                  <h3>{filter ? '没有找到匹配的图片。' : '留一点空间，给新的图片。'}</h3>
-                  <p>
-                    {filter
-                      ? '调整名称或标签，再试一次。'
-                      : '上传图片到这里，或从其他文件夹移动过来。'}
-                  </p>
-                  <Button variant="secondary" onClick={() => setUploadOpen(true)}>
-                    上传图片
-                  </Button>
+                  <h3>{hasFilters ? '没有符合条件的资源' : '留一点空间，给新的图片。'}</h3>
+                  {hasFilters ? (
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        setSearch('');
+                        setFilter('');
+                        changeMediaType('');
+                      }}
+                    >
+                      清除筛选
+                    </Button>
+                  ) : (
+                    <>
+                      <p>上传图片到这里，或从其他文件夹移动过来。</p>
+                      <Button variant="secondary" onClick={() => setUploadOpen(true)}>
+                        上传图片
+                      </Button>
+                    </>
+                  )}
                 </div>
               )}
               {images.data?.total > 40 && (

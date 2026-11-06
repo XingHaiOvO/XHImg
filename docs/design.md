@@ -8,7 +8,7 @@
 
 XHImg 是独立的单管理员系统，包含授权上传、文件夹管理、本地与 S3 存储、公开图库、随机图 API、图片处理、断点续传、AI 归档和存储迁移。不提供匿名上传、公开注册或多租户。
 
-P0、P1、P2 是历史开发阶段名称：P0 为基础图片管理，P1 为处理、续传和 AI，P2 为存储迁移。下文按当前模块职责说明，阶段名称仅在历史验证和迁移文件名中保留。
+P0、P1、P2 是历史开发阶段名称，分别对应基础图片管理、处理与续传及 AI、存储迁移。
 
 第三方功能参考与源码来源声明见 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)。
 
@@ -17,10 +17,10 @@ P0、P1、P2 是历史开发阶段名称：P0 为基础图片管理，P1 为处�
 ```text
 XHImg/
   apps/server/
-    migrations/       版本化 SQL
+    migrations/init.sql  SQLite 初始化结构
     src/
       app.ts          插件、安全钩子、路由装配与生命周期
-      db.ts           SQLite/Drizzle、迁移和事务
+      db.ts           SQLite/Drizzle、初始化和事务
       security.ts     密码、加密、签名、范围判定和限流
       auth.ts         安装、管理员会话、API Key
       resources.ts    文件夹、图片管理、存储设置和公共查询

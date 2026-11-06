@@ -200,9 +200,11 @@ data/
 └── migration-work/        # 迁移临时文件
 ```
 
-升级前先停止写入，备份数据库、图片对象、`.env` 和对应版本。启动会自动执行尚未应用的 SQL 迁移；不要在已迁移的数据库上直接运行旧版本。S3 对象需单独备份。
+首次启动会用 `apps/server/migrations/init.sql` 初始化空的 SQLite 数据库。Docker Compose 和本地部署都会自动完成这一步。
 
-Docker Compose 部署在备份并更新源码后，运行 `docker compose up -d --build xhimg` 重建镜像并启动；仅重启已有容器不会加载新代码或迁移文件。随机图 slug 随 `0007_random_slug.sql` 自动升级，已有服务默认不配置 slug，原地址保持有效，无需新增环境变量或修改数据卷。完整步骤见[升级说明](docs/operations.md#升级)。
+已有实例请先停止写入，备份数据库、图片对象、`.env` 和对应版本。S3 对象需单独备份。若数据库还未完成 `0001` 至 `0009` 的迁移，先用包含这些迁移的版本（如 `1b4777d`）在原数据目录完成升级，再部署新版。
+
+Docker Compose 部署在备份并更新源码后，运行 `docker compose up -d --build xhimg` 重建镜像并启动。继续使用原有数据卷和 `MASTER_KEY`。详见[升级说明](docs/operations.md#升级)。
 
 **仅支持单实例运行，不要让多个实例共享同一数据目录。** `GET /health` 检查进程和数据库可访问性，S3 连通性需通过后台存储测试确认。
 
