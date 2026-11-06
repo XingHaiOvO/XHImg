@@ -53,6 +53,8 @@ shadcn/ui 在此表示组件组织方式的参考；实际通过包管理器引�
 
 本表不包含开发工具、类型定义、传递依赖及原生组件的完整清单。尤其是图片处理与数据库相关的原生组件，其许可证不能仅由 JavaScript 包的标识推断。
 
+Docker 运行镜像通过 Debian 的 `ffmpeg` 软件包提供 FFmpeg 和 FFprobe，分别用于视频封面生成和上传校验。该软件包独立于 pnpm 依赖清单，版权和许可信息见镜像内软件包随附文件。[Dockerfile](Dockerfile)
+
 ## 版本与许可文件
 
 - 直接依赖声明位于根目录、`apps/web/`、`apps/server/` 和 `packages/shared/` 的 `package.json`。

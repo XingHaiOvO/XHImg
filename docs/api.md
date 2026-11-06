@@ -90,8 +90,9 @@ curl -i -X PATCH 'http://localhost:9521/api/v1/resumable/upl_ID' \
 ## 图片与文件夹查询
 
 - `GET /folders/{id}/images`：有效公开文件夹可匿名访问，私有文件夹须授权。内部图片仍逐项过滤。支持分页、search、tag、sort（newest/oldest/name）。
-- `GET /public/images`：公开图片和视频，支持相同筛选，另有 folderId。公开、文件夹和管理列表均可用 `mediaType=image|video` 筛选。公开列表省略存储位置。
-- `GET /public/folders`、`GET /public/services`、`GET /public/settings`：公开导航、服务卡片及站点名称、描述和首页背景图片地址。
+- `GET /public/images` 返回公开图片和视频，支持相同筛选和可选 `folderId`，省略存储位置。
+- `GET /admin/images` 使用管理员会话，支持相同筛选和可选 `folderId`。这三个列表均可使用 `mediaType=image|video`，省略时返回两类资源。文件夹、搜索和媒体类型筛选可以叠加，分页总数按筛选结果计算。
+- `GET /public/folders`、`GET /public/services` 分别返回公开文件夹和服务。 `GET /public/settings` 返回 `title`、`description`、`logoUrl` 和 `homeBackgroundUrl`。
 
 图片传输使用站点根路径 `GET /i/{id}`、`GET /t/{id}`，不加 `/api/v1` 前缀。访问时验证会话、Key 或 `sig` 查询参数；源文件仅允许管理员从专用下载接口获取。缓存与跳转规则见下节。
 
@@ -99,27 +100,27 @@ MP4 通过 `GET /i/{id}` 在站内播放。本地和 S3 视频均支持 `HEAD` �
 
 ## 图片地址与有效期
 
-| 字段                                    | 含义                                                       |
-| --------------------------------------- | ---------------------------------------------------------- |
-| `url`、`thumbnailUrl`                   | 当前可用地址；已发布且有读取权限的 S3 图片为临时预签名地址 |
-| `logicalUrl`、`logicalThumbnailUrl`     | 站内逻辑地址，适合长期保存引用；私有资源仍需授权           |
-| `urlExpiresAt`、`thumbnailUrlExpiresAt` | 可选，到期 Unix 毫秒，本地图片不提供                       |
+| 字段                                    | 含义                                                                                |
+| --------------------------------------- | ----------------------------------------------------------------------------------- |
+| `url`、`thumbnailUrl`                   | 当前可用地址。S3 图片及就绪的 S3 缩略图或封面可获得预签名地址，MP4 播放使用站内地址 |
+| `logicalUrl`、`logicalThumbnailUrl`     | 站内地址。私有资源的地址可能带短期 `sig`，长期引用保存站内路径                      |
+| `urlExpiresAt`、`thumbnailUrlExpiresAt` | 可选，仅表示相应 S3 预签名地址的到期时间，单位为 Unix 毫秒                          |
 
 图片响应包含 `logicalUrl`、`logicalThumbnailUrl`。有当前读取权限且已发布的 S3 图片，其 `url`、就绪的 `thumbnailUrl` 为 GET 预签名地址；可选 `urlExpiresAt`、`thumbnailUrlExpiresAt` 为到期 Unix 毫秒。默认最长 300 秒，不超过会话、API Key 或站内签名的剩余有效期。无读取权限的上传者仍可得到上传成功元数据，但不会得到私有对象的 S3 地址；异步处理/分类未发布、回收站及未就绪缩略图不签发。
 
-站内 `GET /i/{imageId}`、`GET /t/{imageId}` 当前鉴权并检查对象后，对 S3 返回 302 及 `Location`，跳转响应为 `private, no-store`，不返回 304；本地仍返回字节。管理员原图下载对 S3 也返回 302，目标使用附件文件名。随机 `json` 返回地址及到期字段，`redirect` 直接跳转 S3，`image` 仍返回图片字节。
+站内 `GET /i/{imageId}` 和 `GET /t/{imageId}` 完成鉴权及对象检查后，S3 图片和缩略图请求返回 `302` 及 `Location`，跳转使用 `private, no-store`。本地资源由应用返回字节。S3 的 MP4 播放由 `/i/{imageId}` 直接转发视频字节。管理员专用的源文件下载接口对 S3 使用附件预签名地址。
 
 S3 签名 URL 不可追加或改写参数（包括缓存刷新参数），也不能替换域名。客户端应按到期时间重新获取地址，或使用站内逻辑地址重新鉴权。已提交上传遇到临时签发故障仍返回成功及逻辑地址，不重复创建图片；直接读取签发故障返回 503。
 
-站内逻辑地址定位当前对象，不受存储迁移和重新处理位置变化影响；私有资源仍需当前授权或有效站内签名。站内签名分享本身也有有效期，不是永久匿名授权。S3 已经签发的地址无法随应用权限变更、密钥撤销立即撤回，可能继续访问到期；物理对象删除或清理也可能提前使旧地址失效。
+站内路径定位当前对象，可在存储迁移和重新处理后继续使用。长期引用保存不带 `sig` 的 `/i/{id}` 或 `/t/{id}`，读取私有资源时提供当前授权，或按需获取新的短期站内签名。已签发的 S3 地址在应用权限变更或密钥撤销后可能继续有效至到期，物理对象删除或清理也可能使其提前失效。
 
 ```js
-const response = await fetch('/api/v1/random?mode=json');
+const response = await fetch('/api/v1/random?mode=json&mediaType=image');
 if (!response.ok) throw new Error('没有可用图片');
 const image = await response.json();
 document.querySelector('img').src = image.url; // 临时直链；原样使用
 console.log(image.urlExpiresAt); // S3有效期，Unix毫秒；本地未提供
-console.log(image.logicalUrl); // 站内地址，适合保存引用；私有地址仍需授权
+console.log(image.logicalUrl); // 站内地址，私有资源可能带短期 sig
 ```
 
 本地公开图片要求重新验证缓存，私有图片和随机响应使用 `no-store`；授权检查先于条件请求的 304 处理。S3 跳转不返回 304。
@@ -137,11 +138,11 @@ console.log(image.logicalUrl); // 站内地址，适合保存引用；私有地�
 
 管理和公开服务列表均返回 `slug`（未配置为 `null`）；配置后 `url` 优先使用 slug 地址。原有全站、文件夹和服务 ID 地址继续有效；更改或清除 slug 后旧别名失效。别名与原地址共享权限、限流和统计，API Key 授权仍使用服务 ID。
 
-服务配置的 `mediaType` 可为 `image`（默认）、`video` 或 `mixed`。管理和公开服务列表均返回该字段，更新时省略则保留原配置。仅视频和混合服务的默认响应可配置为 `redirect` 或 `json`，创建时省略 `mode` 使用 `redirect`。更新时省略 `mode` 会保留兼容的原配置。升级时，默认响应为 `image` 的混合服务会迁移到 `redirect`。调用混合服务时可显式传入 `?mode=image` 获取图片二进制。
+服务配置的 `mediaType` 可为 `image`（默认）、`video` 或 `mixed`。管理和公开服务列表均返回该字段，更新时省略则保留原配置。仅视频和混合服务的默认响应可配置为 `redirect` 或 `json`，创建时省略 `mode` 使用 `redirect`。更新时省略 `mode` 会保留兼容的原配置。调用混合服务时可显式传入 `?mode=image` 获取图片二进制。旧混合服务的默认响应修正由历史迁移 `0009` 完成。[旧库升级流程](operations.md#升级)
 
 `mode=json` 和 `mode=redirect` 可用查询参数 `mediaType=image|video` 缩小候选范围。混合服务省略筛选时，从所有符合规则的图片与视频中抽取。请求类型与服务配置或模式冲突时返回 `400 INVALID_MEDIA_SELECTION`。
 
-例如 `GET /api/v1/random/wallpaper?mode=json&mediaType=video` 返回选中资源的 `mediaType`、`mime`、`url` 和原有信息字段。MP4 的 JSON `url` 与 302 `Location` 都是固定的站内播放地址，播放响应使用 `Content-Type: video/mp4` 和 `Content-Disposition: inline`。播放器应使用这次返回的地址发送后续分段请求，避免重新抽取。
+例如 `GET /api/v1/random/wallpaper?mode=json&mediaType=video` 返回选中资源的 `mediaType`、`mime`、`url` 和原有信息字段。MP4 的 JSON `url` 与 302 `Location` 都是本次抽中的站内播放地址。站外客户端应以 XHImg 的站点来源解析相对地址。播放器用这次返回的地址发送后续分段请求，避免重新抽取。播放响应使用 `Content-Type: video/mp4` 和 `Content-Disposition: inline`。
 
 私有站内链接默认签名五分钟，原资源与封面分别授权。读取时检查资源权限、签发会话或 Key、服务启用状态、当前媒体类型及来源规则。密钥撤销或权限变化会使站内签名立即失效。已经签发的 S3 图片地址仍可能使用至到期，见[图片地址与有效期](#图片地址与有效期)。
 

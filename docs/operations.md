@@ -66,10 +66,13 @@ pnpm --filter @xhimg/server backup /absolute/backup/xhimg.sqlite
 docker compose stop xhimg
 docker compose cp xhimg:/app/data ./xhimg-backup
 # 单独安全复制 .env，备份 S3 对象并保存对应源码或镜像版本。
-docker compose start xhimg
+# 仅做备份时恢复服务。准备升级时保持停止。
+# docker compose start xhimg
 ```
 
 每次使用独立的备份目标目录，避免与旧备份混合。命名卷是持久化位置，不是独立备份；不要使用会删除数据卷的清理操作代替升级。
+
+若备份用于升级，复制完成后保持旧容器停止，直接进入升级流程。
 
 ## 恢复
 
@@ -109,6 +112,8 @@ docker compose logs --tail=100 xhimg
 
 已有数据库保留原来的迁移记录。若启动日志提示迁移尚未完成或数据库结构无法识别，先检查数据目录或数据卷是否正确。对于尚未升级的 XHImg 数据库，按上面的通用流程用旧版本完成迁移。历史文件名修复、存储迁移计数回填和随机图默认响应调整会在那一步完成。
 
+升级后如果重新出现管理员安装页，先核对 Compose 项目名、数据卷或本地 `DATA_DIR`，确认服务连接到原数据库后再继续。
+
 处理与 AI 默认关闭，已有 Key 不会自动获得 `ai:classify`。增加迁移表不会自动复制图片；只有管理员创建预览并确认后才执行存储迁移。
 
 来源白名单开关缺失的旧配置按关闭处理，原名单保留，需管理员手动启用。S3 短期直链和来源白名单调整无需新增数据库迁移，不自动更改桶权限或现有对象位置。
@@ -134,6 +139,17 @@ slug 在「随机图服务 → 配置」中按服务保存，配置后使用 `/a
 AI 使用独立单并发队列，默认 60 秒超时，网络、429、5xx 额外重试最多两次；授权错误或无效结果直接失败。既有图片分类失败保留原归属，人工移动使旧整理结果失效。图片处理与缩略图共用单并发 CPU 队列。
 
 临时图片处理禁用 Sharp 操作缓存，避免 Windows WebP 文件锁。临时文件清理失败会独立重试，不把已生成的缩略图改为失败。过期会话与超过一天的临时文件由后台清理。
+
+### MP4 跳转与播放排查
+
+将下例中的站点和 `wallpaper` 替换为实际地址及公开随机服务的 slug。该服务需允许抽取视频。
+
+```sh
+curl -sS -L -D - -o /dev/null -H 'Range: bytes=0-15' \
+  'https://img.example.com/api/v1/random/wallpaper?mode=redirect&mediaType=video'
+```
+
+第一跳应返回 `302`，`Location` 指向抽中的站内 `/i/{id}`。最终响应应为 `206`，包含 `Content-Range`、`Content-Type: video/mp4` 和 `Content-Disposition: inline`。若经代理访问时发生下载或无法拖动进度，对比直连后端和公开域名的最终响应，检查代理是否改写媒体响应头或丢弃 `Range`。
 
 ### 存储迁移恢复
 

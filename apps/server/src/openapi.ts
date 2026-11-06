@@ -330,9 +330,15 @@ export function documentedApi(app: FastifyInstance) {
   document.components.schemas ??= {};
   document.components.schemas.ImageUrls = object(
     {
-      url: { type: 'string', description: '可用 S3 对象为 GET 预签名地址，其余为站内地址。' },
+      url: {
+        type: 'string',
+        description: '可用的 S3 图片使用 GET 预签名地址。MP4 使用站内播放地址。',
+      },
       thumbnailUrl: string,
-      logicalUrl: { type: 'string', description: '站内逻辑地址；私有分享仍需站内签名或当前身份。' },
+      logicalUrl: {
+        type: 'string',
+        description: '站内地址。私有资源可能带短期 sig，长期引用请保存站内路径并在访问时授权。',
+      },
       logicalThumbnailUrl: string,
       urlExpiresAt: {
         type: 'integer',
@@ -548,7 +554,7 @@ export function documentedApi(app: FastifyInstance) {
       if (path.startsWith('/i/') || path.startsWith('/t/') || path.endsWith('/original')) {
         op.responses['302'] = {
           description:
-            'S3 对象：完成当前鉴权及对象检查后跳转，Location 为短期 GET 预签名地址；private, no-store，不返回304。',
+            '可预签名的 S3 对象在完成鉴权及对象检查后跳转到短期 GET 地址。MP4 的站内播放由 /i/ 直接传输。',
           headers: { Location: { schema: { type: 'string', format: 'uri' } } },
         };
       }
@@ -561,7 +567,7 @@ export function documentedApi(app: FastifyInstance) {
       ) {
         op.description =
           (op.description ?? '') +
-          ' 图片地址字段见ImageUrls：S3按当前读取权限签发最长5分钟直链，回收站、发布隔离及未就绪对象不签发。已签发S3地址不随站内权限变更立即撤销；长期引用使用logicalUrl。随机image模式仍返回字节，redirect模式可直接跳转S3。';
+          ' 地址字段见 ImageUrls。S3 图片和就绪缩略图按当前读取权限签发最长 5 分钟的直链。回收站和发布隔离对象不签发。已签发的 S3 地址可在权限变更后继续有效至到期。MP4 播放使用站内地址。';
       }
       if (!Object.keys(op.responses).some((x) => x.startsWith('2')))
         op.responses['200'] = { description: '成功' };
