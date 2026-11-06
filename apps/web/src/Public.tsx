@@ -108,7 +108,7 @@ export function Thumbnail({
       )}
       {video && (
         <span className="thumbnail-video-badge" aria-hidden="true">
-          <Play size={12} /> 视频
+          <Play size={11} fill="currentColor" strokeWidth={0} /> 视频
         </span>
       )}
       {previewHint && !thumbnail.unavailable && (

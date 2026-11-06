@@ -910,6 +910,7 @@ form > .button {
   opacity: 1;
 }
 .image-thumb {
+  container-type: inline-size;
   border: 0;
   padding: 0;
   display: block;
@@ -1415,13 +1416,13 @@ html[data-theme='dark'] .docs-page .tok-method {
   aspect-ratio: 1.35 !important;
   border-radius: 8px;
 }
-.recent-grid span {
-  font-size: 12px;
+.recent-grid .overview-caption {
   display: block;
+  margin-top: 10px;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  margin-top: 10px;
 }
 .resource-layout {
   display: flex;
@@ -1563,6 +1564,11 @@ html[data-theme='dark'] .docs-page .tok-method {
   left: 10px;
   box-shadow: 0 0 4px #0002;
   opacity: 0;
+}
+/* 选择框占住左上角，视频徽标让到左下，避免叠在一起 */
+.image-card-top .thumbnail-video-badge {
+  top: auto;
+  bottom: 7px;
 }
 .image-card:hover .image-card-top > input,
 .image-card:focus-within .image-card-top > input,
@@ -2063,16 +2069,29 @@ html[data-theme='dark'] .service-stats .service-failures strong {
 }
 .thumbnail-video-badge {
   position: absolute;
-  top: 8px;
-  inset-inline-start: 8px;
+  z-index: 1;
+  top: 7px;
+  inset-inline-start: 7px;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
+  gap: 5px;
+  padding: 2px 8px 2px 6px;
   border-radius: var(--r-full);
   color: #fff;
-  background: #172334e8;
-  font-size: 12px;
+  background: #0f1a28d9;
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.7;
+  white-space: nowrap;
+  pointer-events: none;
+}
+/* 表格里 40px 的缩略图放不下徽标，直接不显示 */
+@container (max-width: 120px) {
+  .thumbnail-video-badge {
+    display: none;
+  }
 }
 .image-facts {
   display: flex;

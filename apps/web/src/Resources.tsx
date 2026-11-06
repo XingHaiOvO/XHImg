@@ -158,7 +158,7 @@ export function Overview() {
                     image.name?.includes('-') ? image.name : `${image.width} × ${image.height}`
                   }
                 >
-                  <span>
+                  <span className="overview-caption">
                     {image.width} × {image.height}
                     {image.createdAt ? ` · ${relativeTime(image.createdAt)}` : ''}
                   </span>
