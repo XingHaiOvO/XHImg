@@ -26,6 +26,12 @@
 
 检查命令及浏览器安装见[项目 README](../README.md#检查命令)。测试产物写入被 Git 忽略的 `.cache/`、`test-results/` 等目录，不随公开仓库分发。下文耗时、RSS、构建体积均为当时开发机观察值，不是生产性能承诺。
 
+## Docker 镜像发布
+
+提交 `f8cea0e` 在 GitHub Actions 上通过了 AMD64 和 ARM64 镜像构建、容器启动、空库初始化、`/health`、FFmpeg 和 FFprobe 检查，并成功推送到 GHCR。已匿名查询 `latest` 的镜像清单，确认包含 `linux/amd64` 和 `linux/arm64`。[GitHub Actions 记录](https://github.com/XingHaiOvO/XHImg/actions/runs/42247891394)
+
+用户确认 Docker Compose 实际部署和使用现有数据卷升级均通过。
+
 ## 数据库初始化与近期界面回归
 
 - 数据库初始化合并后，比较了原九个脚本和 `init.sql` 建立的 66 个 SQLite 结构对象及九条迁移记录。验证了空库首次安装、重启、完整迁移旧库启动以及未升级旧库拒绝启动且文件内容保持原样。98 个服务端用例、类型检查和构建通过。该轮未重跑 Chromium，未构建或启动 Docker 容器。
@@ -67,7 +73,6 @@
 
 ## 未验证范围
 
-- Docker/Compose 实际构建与启动。
 - AWS S3、R2、MinIO 等真实供应商的完整兼容性、域名、TLS 和网络配置。
 - 真实视觉模型及供应商侧限流。
 - 实际 2 核 / 2 GiB VPS 的持续并发、带宽、长时间运行与内存峰值。

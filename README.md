@@ -29,7 +29,7 @@ XHImg 是面向个人自托管的媒体管理与随机图 API 服务，采用单
 
 ### 1. 准备配置
 
-复制配置模板：
+首次部署时复制配置模板。已有实例升级时保留原来的 `.env` 和 `MASTER_KEY`。
 
 ```sh
 cp .env.example .env
@@ -41,13 +41,13 @@ Windows PowerShell 使用：
 Copy-Item .env.example .env
 ```
 
-生成独立的主密钥，不要直接使用模板中的示例值：
+为新实例生成独立的主密钥：
 
 ```sh
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-将输出的 **64 位十六进制字符串**写入 `.env` 的 `MASTER_KEY`，将 `PUBLIC_URL` 设置为站点访问来源。本地体验可使用 `http://localhost:9521`；公网部署应使用实际 HTTPS 来源，例如 `https://img.example.com`，同时设置 `COOKIE_SECURE=true`。
+将输出的 **64 个十六进制字符**写入 `.env` 的 `MASTER_KEY`，将 `PUBLIC_URL` 设置为站点访问来源。本地体验可使用 `http://localhost:9521`。公网部署应使用实际 HTTPS 来源，例如 `https://img.example.com`，同时设置 `COOKIE_SECURE=true`。
 
 `MASTER_KEY` 用于保护存储和 AI 凭证，应固定保存并随数据备份，不要在重启或升级时重新生成，也不要提交到 Git。仅使用 Docker、宿主机未安装 Node.js 时，也可用密码工具生成 32 字节随机值的十六进制表示。
 
@@ -68,7 +68,7 @@ docker compose logs xhimg
 
 #### 使用 GHCR 预构建镜像
 
-GitHub Actions 将 `main` 发布为 `latest`，将 `vX.Y.Z` Git 标签发布为同名镜像标签。镜像支持 Linux AMD64 和 ARM64。首次发布后，仓库管理员需在 GitHub Packages 将容器包设为 **Public**，开放匿名拉取。[GitHub 容器仓库](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+镜像支持 Linux AMD64 和 ARM64，可匿名拉取。`latest` 对应主分支构建，`vX.Y.Z` 对应同名 Git 标签。
 
 ```sh
 docker pull ghcr.io/xinghaiovo/xhimg:latest
@@ -115,15 +115,15 @@ Windows 上 `better-sqlite3` 优先使用匹配 Node ABI 的预编译模块；�
 
 本地运行从根目录 `.env` 读取配置。Docker Compose 按 [docker-compose.yml](docker-compose.yml) 映射环境变量。
 
-| 变量            | 默认值 / 要求             | 用途                                             |
-| --------------- | ------------------------- | ------------------------------------------------ |
-| `MASTER_KEY`    | 必填，64 位十六进制字符串 | 自行生成并长期保留的主密钥                       |
-| `PUBLIC_URL`    | `http://localhost:9521`   | 对外访问来源，包含协议、域名及必要端口           |
-| `HOST`          | `0.0.0.0`                 | 本地运行时的监听地址                             |
-| `PORT`          | `9521`                    | 本地运行时的监听端口                             |
-| `DATA_DIR`      | `./data`                  | 本地数据目录，相对项目根目录解析，也支持绝对路径 |
-| `COOKIE_SECURE` | `false`                   | HTTPS 部署设为 `true`                            |
-| `TRUST_PROXY`   | `false`                   | 是否信任反向代理提供的来源信息                   |
+| 变量            | 默认值 / 要求           | 用途                                             |
+| --------------- | ----------------------- | ------------------------------------------------ |
+| `MASTER_KEY`    | 必填，64 个十六进制字符 | 自行生成并长期保留的主密钥                       |
+| `PUBLIC_URL`    | `http://localhost:9521` | 对外访问来源，包含协议、域名及必要端口           |
+| `HOST`          | `0.0.0.0`               | 本地运行时的监听地址                             |
+| `PORT`          | `9521`                  | 本地运行时的监听端口                             |
+| `DATA_DIR`      | `./data`                | 本地数据目录，相对项目根目录解析，也支持绝对路径 |
+| `COOKIE_SECURE` | `false`                 | HTTPS 部署设为 `true`                            |
+| `TRUST_PROXY`   | `false`                 | 是否信任反向代理提供的来源信息                   |
 
 Compose 固定容器监听端口为 `9521`、数据目录为 `/app/data`；修改 `.env` 的 `HOST`、`PORT` 或 `DATA_DIR` 不会更改这些容器设置。如需调整宿主机端口或挂载位置，请编辑 Compose 文件。
 
@@ -275,7 +275,9 @@ pnpm test:e2e
 
 端到端测试读取 `pnpm build` 产出的文件，并在独立的 `9522` 端口运行。要执行 MP4 用例，需在 `PATH` 提供 FFmpeg 和 FFprobe。后端测试使用隔离的临时数据库和对象目录，S3 相关用例使用本机 HTTP 夹具和 AWS SDK。
 
-历史验证范围与限制见 [功能验证记录](docs/validation.md)、[界面验证记录](docs/ui-validation.md)、[S3 直链验证记录](docs/s3-links-validation.md) 和 [存储迁移验证记录](docs/p2-validation.md)。Docker 实际构建和启动尚未验证，配置文件的存在不代表部署验收通过。
+提交 `f8cea0e` 已通过 GitHub Actions 的 AMD64 和 ARM64 镜像构建与容器启动检查，并成功推送至 GHCR。Docker Compose 实际部署和使用现有数据卷升级均已验证。[Docker 镜像发布记录](docs/validation.md#docker-镜像发布)
+
+其他验证范围见 [功能验证记录](docs/validation.md)、[界面验证记录](docs/ui-validation.md)、[S3 直链验证记录](docs/s3-links-validation.md) 和 [存储迁移验证记录](docs/p2-validation.md)。
 
 ## 文档导航
 
