@@ -66,6 +66,30 @@ docker compose logs xhimg
 
 镜像内置 FFmpeg 和 FFprobe。使用本地 Node.js 部署时，上传 MP4 需要把两者加入 `PATH`。
 
+#### 使用 GHCR 预构建镜像
+
+GitHub Actions 将 `main` 发布为 `latest`，将 `vX.Y.Z` Git 标签发布为同名镜像标签。镜像支持 Linux AMD64 和 ARM64。首次发布后，仓库管理员需在 GitHub Packages 将容器包设为 **Public**，开放匿名拉取。[GitHub 容器仓库](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+
+```sh
+docker pull ghcr.io/xinghaiovo/xhimg:latest
+docker buildx imagetools inspect ghcr.io/xinghaiovo/xhimg:latest
+```
+
+使用预构建镜像部署时，在现有 Compose 文件旁创建 `compose.image.yml`，并按需将 `latest` 替换为已发布的版本标签。
+
+```yaml
+services:
+  xhimg:
+    image: ghcr.io/xinghaiovo/xhimg:latest
+```
+
+```sh
+docker compose -f docker-compose.yml -f compose.image.yml pull xhimg
+docker compose -f docker-compose.yml -f compose.image.yml up -d --no-build xhimg
+```
+
+升级时继续使用原 Compose 项目名、数据卷和 `MASTER_KEY`，先备份并确认原数据库已完成 `0001` 至 `0009` 的迁移。[升级说明](docs/operations.md#升级)
+
 #### 本地 Node.js
 
 需要 **Node.js 24** 和 **pnpm 12.8.1**：
