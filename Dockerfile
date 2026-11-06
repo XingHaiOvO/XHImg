@@ -13,6 +13,7 @@ RUN pnpm install --frozen-lockfile
 COPY apps apps
 COPY packages packages
 RUN pnpm build
+RUN pnpm --filter @xhimg/server --prod deploy /prod/server
 
 FROM node:24-bookworm-slim
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=9521 DATA_DIR=/app/data
@@ -20,10 +21,9 @@ WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
-# Preserve pnpm's symlink graph and native modules built on the same Debian ABI.
-COPY --from=build --chown=node:node /app/node_modules ./node_modules
+# Copy the self-contained production dependency tree built for this Debian ABI.
 COPY --from=build --chown=node:node /app/apps/server/package.json ./apps/server/package.json
-COPY --from=build --chown=node:node /app/apps/server/node_modules ./apps/server/node_modules
+COPY --from=build --chown=node:node /prod/server/node_modules ./apps/server/node_modules
 COPY --from=build --chown=node:node /app/apps/server/dist ./apps/server/dist
 COPY --from=build --chown=node:node /app/apps/server/migrations/init.sql ./apps/server/migrations/init.sql
 COPY --from=build --chown=node:node /app/apps/web/dist ./apps/web/dist
